@@ -185,17 +185,27 @@ bot.on("message:text", async (ctx) => {
 });
 
 async function generateAndReply(ctx: Context, userPrompt: string, replyToMessageId?: number) {
+  // Send "generating" message
+  const generatingMessage = await ctx.reply("🎨 Генерирую изображение Pepe...", {
+    reply_to_message_id: replyToMessageId
+  });
+  
   try {
     log(`Generating image for prompt: "${userPrompt}"`);
 
-    // Detect language for promo generation
-    const language = /[а-яё]/i.test(userPrompt) ? 'ru' : 'en';
+    // Better language detection for promo generation
+    const containsCyrillic = /[а-яё]/i.test(userPrompt);
+    const language = containsCyrillic ? 'ru' : 'en';
+    
+    log(`Detected language: ${language} for prompt: "${userPrompt}"`);
 
     // Extract or assign mood
     let mood = extractMoodFromPrompt(userPrompt);
     if (!mood) {
       mood = getRandomMood();
     }
+    
+    log(`Selected mood: ${mood}`);
 
     // Create enhanced prompt with Pepe style and mood
     const enhancedPrompt = buildPepePrompt(userPrompt, mood);
@@ -213,6 +223,13 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
     if (!imageBuffer) {
       throw new Error("Failed to generate image");
     }
+    
+    // Delete the "generating" message
+    if (ctx.chat) {
+      await ctx.api.deleteMessage(ctx.chat.id, generatingMessage.message_id).catch(() => {
+        // Ignore errors if message already deleted or too old
+      });
+    }
 
     // Send image with promo message and sharing buttons
     await ctx.replyWithPhoto(new InputFile(imageBuffer), {
@@ -222,10 +239,17 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
       reply_markup: sharingButtons
     });
 
-    log(`Successfully generated image and promo for: "${userPrompt}"`);
+    log(`Successfully generated image and promo for: "${userPrompt}" (language: ${language}, mood: ${mood})`);
 
   } catch (error) {
     log(`Error generating content: ${error}`, "error");
+    
+    // Delete the "generating" message on error too
+    if (ctx.chat) {
+      await ctx.api.deleteMessage(ctx.chat.id, generatingMessage.message_id).catch(() => {
+        // Ignore errors if message already deleted
+      });
+    }
     
     const errorMessage = error instanceof Error ? 
       formatGeminiError(error.message) : 
