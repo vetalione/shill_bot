@@ -116,12 +116,16 @@ bot.command("start", async (ctx) => {
 • Я создам изображение + промо-сообщение + кнопки для шэринга
 
 🎯 **Система баллов:**
-• 🫂 Поделиться в Telegram: +1 балл
-• 🐦 Поделиться в Twitter: +2 балла
+• 🫂 Telegram: +1 балл (переслать сообщение с картинкой)
+• 🐦 Twitter: +2 балла (опубликовать готовый твит)
 • /leaderboard - таблица лидеров
 
+📱 **Как делиться:**
+• **Telegram:** Нажмите и удерживайте сообщение с картинкой → "Переслать"
+• **Twitter:** Нажмите кнопку → откроется готовый твит → "Tweet"
+
 🌟 **Дополнительные команды:**
-• /moods - список всех настроений
+• /moods - список всех настроений  
 • /promo - получить промо-сообщение
 
 Попробуйте написать что-то вроде "грустный Pepe" или "happy Pepe cooking"!`;
@@ -240,7 +244,7 @@ bot.on("callback_query:data", async (ctx) => {
   const userName = ctx.from.first_name || ctx.from.username || "Unknown";
   
   if (data.startsWith("share_tg:")) {
-    // Extract message ID and get promo message for Telegram sharing
+    // Extract message ID for Telegram sharing
     const messageId = data.split("share_tg:")[1];
     const promoMessage = promoMessages[messageId];
     
@@ -248,18 +252,16 @@ bot.on("callback_query:data", async (ctx) => {
       // Award 1 point for Telegram sharing
       const totalPoints = addPoints(userId, 1);
       
-      // Use switch_inline_query to open sharing menu
       await ctx.answerCallbackQuery({
-        text: `+1 очко! У вас ${totalPoints} очков. Выберите чат для отправки!`,
-        show_alert: false
+        text: `+1 очко! У вас ${totalPoints} очков. Просто перепошлите это сообщение!`,
+        show_alert: true
       });
       
-      // Send follow-up with inline share button
+      // Send instruction message
       await ctx.reply(
-        `📤 Нажмите кнопку ниже, чтобы поделиться этим контентом в любом чате:`,
+        `📤 **Поделиться в Telegram:**\n\nПросто перепошлите сообщение с картинкой выше ↑ в любую группу или чат!\n\nℹ️ *Нажмите и удерживайте сообщение с картинкой, затем выберите "Перепослать"*`,
         {
-          reply_markup: new InlineKeyboard()
-            .switchInline('📤 Выбрать чат для отправки', `share_content_${messageId}`),
+          parse_mode: "Markdown",
           reply_to_message_id: ctx.callbackQuery.message?.message_id
         }
       );
@@ -323,58 +325,23 @@ bot.on("callback_query:data", async (ctx) => {
   }
 });
 
-// Handle inline queries for sharing content
+// Handle inline queries (simplified - mainly for bot info)
 bot.on("inline_query", async (ctx) => {
   const query = ctx.inlineQuery.query;
   
-  // Check if this is a sharing query
-  if (query.startsWith("share_content_")) {
-    const messageId = query.replace("share_content_", "");
-    const promoMessage = promoMessages[messageId];
-    
-    if (promoMessage) {
-      await ctx.answerInlineQuery([
-        {
-          type: "article",
-          id: messageId,
-          title: "🎉 Поделиться промо-сообщением $PEPE.MP3",
-          description: "Нажмите, чтобы отправить промо-сообщение в этот чат",
-          input_message_content: {
-            message_text: promoMessage,
-            parse_mode: "Markdown"
-          }
-        }
-      ], {
-        cache_time: 60, // Cache for 1 minute
-        is_personal: true
-      });
-    } else {
-      await ctx.answerInlineQuery([
-        {
-          type: "article", 
-          id: "not_found",
-          title: "❌ Сообщение не найдено",
-          description: "Попробуйте сгенерировать новое изображение",
-          input_message_content: {
-            message_text: "Сообщение не найдено. Попробуйте сгенерировать новое изображение."
-          }
-        }
-      ]);
-    }
-  } else {
-    // Default inline query response
-    await ctx.answerInlineQuery([
-      {
-        type: "article",
-        id: "default",
-        title: "🤖 ShillBot",
-        description: "Отправьте запрос боту для генерации изображения Pepe",
-        input_message_content: {
-          message_text: "🤖 Используйте бота для генерации изображений Pepe с промо-сообщениями!"
-        }
+  // Default inline query response
+  await ctx.answerInlineQuery([
+    {
+      type: "article",
+      id: "default",
+      title: "🤖 ShillBot - AI Pepe Generator",
+      description: "Отправьте запрос боту для генерации AI изображений Pepe",
+      input_message_content: {
+        message_text: "🐸 **ShillBot** - генератор AI изображений Pepe\n\n🎨 Напишите боту что должен делать Pepe!\n\n💬 [Telegram](https://t.me/pepemp3) • 🐦 [X/Twitter](https://x.com/pepegotavoice)",
+        parse_mode: "Markdown"
       }
-    ]);
-  }
+    }
+  ]);
 });
 
 // Leaderboard command
