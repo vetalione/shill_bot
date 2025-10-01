@@ -1,0 +1,28 @@
+{
+  "hosting": {
+    "public": "dist/public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/twitter/**",
+        "function": "twitterCard"
+      },
+      {
+        "source": "/api/**",
+        "function": "api"
+      }
+    ]
+  },
+  "functions": {
+    "source": "dist/functions",
+    "runtime": "nodejs18",
+    "predeploy": ["npm run build"]
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
+}

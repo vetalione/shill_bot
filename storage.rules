@@ -1,0 +1,17 @@
+rules_version = '2';
+
+// Storage rules for Firebase Storage
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Allow read access to temp-images for 24 hours
+    match /temp-images/{imageId} {
+      allow read: if true;
+      allow write: if false; // Only server can write
+    }
+    
+    // Deny all other access
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

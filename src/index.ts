@@ -2,10 +2,27 @@ import { Bot, GrammyError, Context, InputFile, InlineKeyboard } from "grammy";
 import "dotenv/config";
 import { generateGeminiImage, generatePromoMessage } from "./providers/gemini.js";
 import { isGroupChat, isPrivateChat, extractBotMention, validatePrompt, formatError, formatGeminiError, log } from "./utils.js";
+import { uploadImageToFirebase } from "./services/firebase.js";
+
+// Twitter Card creation function
+async function createTwitterCard(shareData: {imageUrl: string, title: string, description: string, twitterText: string}): Promise<string> {
+  try {
+    // In production, this would call your Firebase Functions or web service
+    // For now, we'll create a simple encoded URL
+    const encodedData = Buffer.from(JSON.stringify(shareData)).toString('base64url');
+    const firebaseWebAppUrl = process.env.FIREBASE_WEB_APP_URL || 'https://your-project.web.app';
+    return `${firebaseWebAppUrl}/twitter/${encodedData}`;
+  } catch (error) {
+    log(`❌ Error creating Twitter card: ${error}`);
+    // Fallback to direct image URL
+    return shareData.imageUrl;
+  }
+}
 
 // Simple in-memory storage for user points and promo messages (in production use database)
 const userPoints: Record<string, number> = {};
 const promoMessages: Record<string, string> = {};
+const firebaseImageUrls: Record<string, string> = {};
 let messageIdCounter = 1;
 
 function addPoints(userId: string, points: number): number {
@@ -26,10 +43,15 @@ function getLeaderboard(): Array<{name: string, points: number}> {
     .slice(0, 10);
 }
 
-function createSharingButtons(promoText: string): InlineKeyboard {
-  // Store promo message with short ID for Telegram sharing
+function createSharingButtons(promoText: string, firebaseImageUrl?: string): InlineKeyboard {
+  // Store promo message with short ID for sharing
   const messageId = `msg${messageIdCounter++}`;
   promoMessages[messageId] = promoText;
+  
+  // Store Firebase image URL if available
+  if (firebaseImageUrl) {
+    firebaseImageUrls[messageId] = firebaseImageUrl;
+  }
   
   return new InlineKeyboard()
     .text('🫂 Поделиться в Telegram', `share_tg:${messageId}`)
@@ -216,13 +238,26 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
       generatePromoMessage(language)
     ]);
 
-    // Create sharing buttons
-    const sharingButtons = promoMessage ? createSharingButtons(promoMessage) : undefined;
-
     // Check if image was generated successfully
     if (!imageBuffer) {
       throw new Error("Failed to generate image");
     }
+
+    // Upload image to Firebase for Twitter sharing (if sharing enabled)
+    let firebaseImageUrl: string | undefined;
+    if (promoMessage) {
+      try {
+        const filename = `pepe_${Date.now()}_${Math.random().toString(36).substring(2)}.jpg`;
+        firebaseImageUrl = await uploadImageToFirebase(Buffer.from(imageBuffer), filename);
+        log(`🔥 Image uploaded to Firebase: ${firebaseImageUrl}`);
+      } catch (error) {
+        log(`❌ Firebase upload failed: ${error}`);
+        // Continue without Firebase - sharing will work but without image preview
+      }
+    }
+
+    // Create sharing buttons with Firebase URL
+    const sharingButtons = promoMessage ? createSharingButtons(promoMessage, firebaseImageUrl) : undefined;
     
     // Delete the "generating" message
     if (ctx.chat) {
@@ -302,6 +337,7 @@ bot.on("callback_query:data", async (ctx) => {
     // Extract message ID and get promo message for Twitter sharing
     const messageId = data.split("share_twitter:")[1];
     const promoMessage = promoMessages[messageId];
+    const firebaseImageUrl = firebaseImageUrls[messageId];
     
     if (promoMessage) {
       // Create Twitter version of the message
@@ -309,24 +345,43 @@ bot.on("callback_query:data", async (ctx) => {
         .replace(/💬 \[Telegram\]\(https:\/\/t\.me\/pepemp3\) • 🐦 \[X\/Twitter\]\(https:\/\/x\.com\/pepegotavoice\)/, '@PEPEGOTAVOICE')
         .replace(/\n\n💬.*$/, '\n\n@PEPEGOTAVOICE');
       
-      const twitterText = encodeURIComponent(twitterVersion);
-      const twitterUrl = `https://twitter.com/intent/tweet?text=${twitterText}`;
-      
       await ctx.answerCallbackQuery({
-        text: "Открываю Twitter для публикации...",
+        text: "Создаю Twitter Card с изображением...",
         show_alert: false
       });
       
+      let twitterUrl: string;
+      let instructions: string;
+      
+      if (firebaseImageUrl) {
+        // Create Twitter Card URL with image preview
+        const shareData = {
+          imageUrl: firebaseImageUrl,
+          title: "🐸 AI Generated Pepe",
+          description: twitterVersion,
+          twitterText: twitterVersion
+        };
+        
+        // Create share card (would call our Firebase web service)
+        const cardUrl = await createTwitterCard(shareData);
+        twitterUrl = `https://twitter.com/intent/tweet?url=${encodeURIComponent(cardUrl)}`;
+        
+        instructions = `🐦 **Поделиться в Twitter с изображением:**\n\n✨ **Ваша ссылка с превью изображения готова!**\n\n1. [🔗 Открыть Twitter и опубликовать](${twitterUrl})\n2. Twitter автоматически покажет изображение в посте\n3. После публикации нажмите кнопку ниже\n\n🎯 *Теперь ваш пост будет с красивым превью Pepe!*`;
+      } else {
+        // Fallback to text-only sharing
+        const twitterText = encodeURIComponent(twitterVersion);
+        twitterUrl = `https://twitter.com/intent/tweet?text=${twitterText}`;
+        
+        instructions = `🐦 **Поделиться в Twitter:**\n\n📝 **Текстовый пост готов!**\n\n1. [Открыть Twitter и опубликовать](${twitterUrl})\n2. После публикации нажмите кнопку ниже\n\n💡 *Изображение не удалось загрузить, но текст готов к публикации*`;
+      }
+      
       // Send follow-up with Twitter link and confirmation button
-      await ctx.reply(
-        `🐦 **Поделиться в Twitter:**\n\n1. [Открыть Twitter и опубликовать](${twitterUrl})\n2. После публикации нажмите кнопку ниже`,
-        {
-          parse_mode: "Markdown",
-          reply_markup: new InlineKeyboard()
-            .text('✅ Подтвердить публикацию (+2 балла)', 'twitter_confirmed'),
-          reply_to_message_id: ctx.callbackQuery.message?.message_id
-        }
-      );
+      await ctx.reply(instructions, {
+        parse_mode: "Markdown",
+        reply_markup: new InlineKeyboard()
+          .text('✅ Подтвердить публикацию (+2 балла)', 'twitter_confirmed'),
+        reply_to_message_id: ctx.callbackQuery.message?.message_id
+      });
       
       log(`User ${userName} (${userId}) requested Twitter sharing for message ${messageId}`);
     } else {
