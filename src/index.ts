@@ -53,10 +53,38 @@ function createSharingButtons(promoText: string, firebaseImageUrl?: string): Inl
     firebaseImageUrls[messageId] = firebaseImageUrl;
   }
   
+  // Create Twitter version of the message
+  let twitterVersion = promoText
+    .replace(/💬 \[Telegram\]\(https:\/\/t\.me\/pepemp3\) • 🐦 \[X\/Twitter\]\(https:\/\/x\.com\/pepegotavoice\)/, '@PEPEGOTAVOICE')
+    .replace(/\n\n💬.*$/, '\n\n@PEPEGOTAVOICE');
+  
+  // Clean up Markdown formatting for Twitter
+  twitterVersion = twitterVersion
+    .replace(/\*\*(.*?)\*\*/g, '$1')  // Remove bold **text**
+    .replace(/\*(.*?)\*/g, '$1')      // Remove italic *text*
+    .replace(/\[(.*?)\]\(.*?\)/g, '$1') // Remove links [text](url)
+    .replace(/`(.*?)`/g, '$1')        // Remove code `text`
+    .trim();
+  
+  // Ensure text fits Twitter's 280 character limit
+  if (twitterVersion.length > 250) { // Leave some space for hashtags
+    twitterVersion = twitterVersion.substring(0, 240) + '... @PEPEGOTAVOICE';
+  }
+  
+  // Create Twitter Intent URL
+  const encodedText = encodeURIComponent(twitterVersion);
+  let twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
+  
+  // Fallback for very long URLs
+  if (twitterUrl.length > 2000) {
+    const fallbackText = `🐸 Check out $PEPE.MP3 - AI-generated Pepe memes! @PEPEGOTAVOICE #TON #PepeMP3`;
+    twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(fallbackText)}`;
+  }
+  
   return new InlineKeyboard()
     .text('🫂 Поделиться в Telegram', `share_tg:${messageId}`)
     .row()
-    .text('🐦 Поделиться в Twitter', `share_twitter:${messageId}`);
+    .url('🐦 Поделиться в Twitter', twitterUrl);
 }
 
 // Bot configuration
@@ -333,75 +361,6 @@ bot.on("callback_query:data", async (ctx) => {
       );
       
       log(`User ${userName} (${userId}) earned 1 point for TG sharing. Total: ${totalPoints}`);
-    } else {
-      await ctx.answerCallbackQuery({
-        text: "Сообщение не найдено",
-        show_alert: true
-      });
-    }
-    
-  } else if (data.startsWith("share_twitter:")) {
-    // Extract message ID and get promo message for Twitter sharing
-    const messageId = data.split("share_twitter:")[1];
-    const promoMessage = promoMessages[messageId];
-    const firebaseImageUrl = firebaseImageUrls[messageId];
-    
-    if (promoMessage) {
-      // Create Twitter version of the message
-      let twitterVersion = promoMessage
-        .replace(/💬 \[Telegram\]\(https:\/\/t\.me\/pepemp3\) • 🐦 \[X\/Twitter\]\(https:\/\/x\.com\/pepegotavoice\)/, '@PEPEGOTAVOICE')
-        .replace(/\n\n💬.*$/, '\n\n@PEPEGOTAVOICE');
-      
-      // Clean up Markdown formatting for Twitter
-      twitterVersion = twitterVersion
-        .replace(/\*\*(.*?)\*\*/g, '$1')  // Remove bold **text**
-        .replace(/\*(.*?)\*/g, '$1')      // Remove italic *text*
-        .replace(/\[(.*?)\]\(.*?\)/g, '$1') // Remove links [text](url)
-        .replace(/`(.*?)`/g, '$1')        // Remove code `text`
-        .trim();
-      
-      console.log('🐦 Twitter version text:', twitterVersion);
-      console.log('🔗 Text length:', twitterVersion.length);
-      
-      // Ensure text fits Twitter's 280 character limit
-      if (twitterVersion.length > 250) { // Leave some space for hashtags
-        twitterVersion = twitterVersion.substring(0, 240) + '... @PEPEGOTAVOICE';
-      }
-      
-      console.log('🐦 Final Twitter text:', twitterVersion);
-      
-      await ctx.answerCallbackQuery({
-        text: "Открываю Twitter...",
-        show_alert: false
-      });
-      
-      // Simple and reliable Twitter Intent URL
-      const encodedText = encodeURIComponent(twitterVersion);
-      let shareUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
-      
-      // Fallback for very long URLs - use simpler text
-      if (shareUrl.length > 2000) {
-        const fallbackText = `🐸 Check out $PEPE.MP3 - AI-generated Pepe memes! @PEPEGOTAVOICE #TON #PepeMP3`;
-        shareUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(fallbackText)}`;
-        console.log('🚨 Using fallback text due to URL length');
-      }
-      
-      console.log('🔗 Final Twitter URL:', shareUrl);
-      console.log('🔗 URL length:', shareUrl.length);
-      
-      const instructions = `🐦 **Поделиться в Twitter:**\n\n1. [🔗 Открыть Twitter](${shareUrl})\n2. Текст уже подготовлен - просто нажмите "Tweet"\n3. Прикрепите изображение Pepe (сохраните из сообщения выше)\n\n💡 *Совет: Долгое нажатие на изображение → Сохранить → Прикрепить в Twitter*`;
-      
-      // Send follow-up with share link and confirmation button
-      await ctx.reply(instructions, {
-        parse_mode: "Markdown",
-        reply_markup: new InlineKeyboard()
-          .url('🐦 Открыть Twitter', shareUrl)
-          .row()
-          .text('✅ Подтвердить публикацию (+2 балла)', 'twitter_confirmed'),
-        reply_to_message_id: ctx.callbackQuery.message?.message_id
-      });
-      
-      log(`User ${userName} (${userId}) requested Twitter sharing for message ${messageId}`);
     } else {
       await ctx.answerCallbackQuery({
         text: "Сообщение не найдено",
