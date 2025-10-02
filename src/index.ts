@@ -106,7 +106,7 @@ function getLeaderboard(): Array<{name: string, points: number}> {
     .slice(0, 10);
 }
 
-function createSharingButtons(promoText: string, cachedMessageId: string): InlineKeyboard {
+async function createSharingButtons(promoText: string, cachedMessageId: string): Promise<InlineKeyboard> {
   // Store promo message for sharing
   promoMessages[cachedMessageId] = promoText;
   
@@ -128,39 +128,45 @@ function createSharingButtons(promoText: string, cachedMessageId: string): Inlin
     twitterVersion = twitterVersion.substring(0, 240) + '... @PEPEGOTAVOICE';
   }
 
-  // Create Twitter Intent URL with Twitter Card support
+  // Create Twitter Intent URL with Twitter Card for image preview
   let twitterUrl: string;
   
   // Check if we have cached image for Twitter Card
   const cachedImage = imageCache.get(cachedMessageId);
   if (cachedImage) {
-    // Create Twitter Card URL for the tweet
-    const cardTitle = encodeURIComponent("AI-Generated Pepe Meme");
-    const cardDescription = encodeURIComponent(twitterVersion);
-    const cardUrl = `https://us-central1-pepe-shillbot.cloudfunctions.net/twitterCard?messageId=${cachedMessageId}&title=${cardTitle}&description=${cardDescription}`;
+    console.log(`🔄 Uploading image to Firebase before creating Twitter URL...`);
     
-    // Include card URL in tweet for rich preview
-    const tweetWithCard = `${twitterVersion}\n\n🖼️ ${cardUrl}`;
-    const encodedText = encodeURIComponent(tweetWithCard);
-    twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
-    
-    // Also create Twitter Card URL with real image URL asynchronously for better preview
-    ensureFirebaseUpload(cachedMessageId)
-      .then(firebaseUrl => {
-        if (firebaseUrl) {
-          console.log(`🃏 Creating Twitter Card with image: ${firebaseUrl}`);
-          
-          // Log the enhanced card URL (for debugging)
-          const cardImageUrl = encodeURIComponent(firebaseUrl);
-          const enhancedCardUrl = `https://us-central1-pepe-shillbot.cloudfunctions.net/twitterCard?imageUrl=${cardImageUrl}&title=${cardTitle}&description=${cardDescription}`;
-          console.log(`🃏 Enhanced Twitter Card URL: ${enhancedCardUrl}`);
-        }
-      })
-      .catch(error => {
-        console.error('❌ Twitter Card creation failed:', error);
-      });
+    // Wait for Firebase upload to complete BEFORE creating Twitter URL
+    try {
+      const firebaseUrl = await ensureFirebaseUpload(cachedMessageId);
+      
+      if (firebaseUrl) {
+        console.log(`🃏 Firebase upload complete: ${firebaseUrl}`);
+        
+        // Create Twitter Card URL with actual image URL
+        const cardTitle = encodeURIComponent("AI-Generated Pepe Meme");
+        const shortDescription = encodeURIComponent("Check out this AI-generated Pepe meme! @PEPEGOTAVOICE #PepeMP3");
+        const cardImageUrl = encodeURIComponent(firebaseUrl);
+        const cardUrl = `https://us-central1-pepe-shillbot.cloudfunctions.net/twitterCard?imageUrl=${cardImageUrl}&title=${cardTitle}&description=${shortDescription}`;
+        
+        // Include Twitter Card URL in tweet for automatic image preview
+        const tweetWithCard = `${twitterVersion}\n\n${cardUrl}`;
+        const encodedText = encodeURIComponent(tweetWithCard);
+        twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
+        
+        console.log(`🃏 Twitter Card URL with real image: ${cardUrl}`);
+        console.log(`📏 Total Twitter URL length: ${twitterUrl.length} characters`);
+      } else {
+        throw new Error('Firebase upload failed');
+      }
+    } catch (error) {
+      console.error('❌ Firebase upload failed, falling back to text-only tweet:', error);
+      // Fallback to text-only tweet if Firebase upload fails
+      const encodedText = encodeURIComponent(twitterVersion);
+      twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
+    }
   } else {
-    // Fallback to text-only tweet
+    // Fallback to text-only tweet if no cached image
     const encodedText = encodeURIComponent(twitterVersion);
     twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
   }
@@ -297,7 +303,7 @@ bot.command("promo", async (ctx) => {
     const promoMessageId = `promo${Date.now()}`;
     
     // Create sharing buttons for the promo message
-    const sharingButtons = createSharingButtons(promo, promoMessageId);
+    const sharingButtons = await createSharingButtons(promo, promoMessageId);
     
     await ctx.reply(promo, { 
       parse_mode: "Markdown",
@@ -396,7 +402,7 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
     }
 
     // Create sharing buttons (Firebase upload will happen lazily)
-    const sharingButtons = promoMessage ? createSharingButtons(promoMessage, messageId) : undefined;
+    const sharingButtons = promoMessage ? await createSharingButtons(promoMessage, messageId) : undefined;
     
     // Delete the "generating" message
     if (ctx.chat) {

@@ -4,20 +4,32 @@ import { onRequest } from "firebase-functions/v2/https";
 export const twitterCard = onRequest((request, response) => {
   const { imageUrl, title, description, messageId } = request.query;
 
-  // If messageId provided but no imageUrl, try to construct it
+  // Construct image URL based on available parameters
   let finalImageUrl = imageUrl as string;
-  if (messageId && !imageUrl) {
-    // This approach won't work reliably since we don't store the mapping
-    // Better to always pass imageUrl when available
-    console.log(`Warning: messageId ${messageId} provided without imageUrl`);
+  
+  // If messageId provided but no imageUrl, try to find recent Firebase upload
+  if (messageId && !finalImageUrl) {
+    // For messageId cases, the real imageUrl should be passed when available
+    // This is a basic fallback scenario
+    console.log(`Twitter Card requested for messageId: ${messageId}`);
+    console.log(`imageUrl parameter: ${imageUrl}`);
   }
 
   const cardTitle = (title as string) || "AI-Generated Pepe Meme";
-  const cardDescription = (description as string) || "Check out this AI-generated Pepe meme! Create your own with @PEPEGOTAVOICE";
+  let cardDescription = (description as string) || "Check out this AI-generated Pepe meme! Create your own with @PEPEGOTAVOICE";
+  
+  // If description is the default short one, use a more engaging description
+  if (cardDescription.includes("Check out this AI-generated Pepe meme! @PEPEGOTAVOICE #PepeMP3")) {
+    cardDescription = "🤖 AI-Generated Pepe Memes with $PEPE.MP3! Create hilarious crypto memes with advanced AI. Join the future of meme culture! #PepeMP3 #TON #MemeCoin";
+  }
 
-  // If no image URL, use a default fallback
+  // Use provided imageUrl or fallback to placeholder
   if (!finalImageUrl) {
-    finalImageUrl = "https://firebasestorage.googleapis.com/v0/b/pepe-shillbot.firebasestorage.app/o/public%2Fdefault-pepe.jpg?alt=media";
+    // Use a better placeholder image
+    finalImageUrl = "https://firebasestorage.googleapis.com/v0/b/pepe-shillbot.firebasestorage.app/o/public%2Fpepe-placeholder.jpg?alt=media";
+    console.log(`No image URL provided, using placeholder for messageId: ${messageId}`);
+  } else {
+    console.log(`Using provided image URL: ${finalImageUrl}`);
   }
 
   const html = `
@@ -35,7 +47,9 @@ export const twitterCard = onRequest((request, response) => {
     <meta name="twitter:title" content="${cardTitle}">
     <meta name="twitter:description" content="${cardDescription}">
     <meta name="twitter:image" content="${finalImageUrl}">
-    <meta name="twitter:image:alt" content="${cardTitle}">
+    <meta name="twitter:image:alt" content="AI-Generated Pepe Meme">
+    <meta name="twitter:image:width" content="1024">
+    <meta name="twitter:image:height" content="1024">
     
     <!-- Open Graph meta tags -->
     <meta property="og:type" content="website">
@@ -45,7 +59,8 @@ export const twitterCard = onRequest((request, response) => {
     <meta property="og:image:type" content="image/jpeg">
     <meta property="og:image:width" content="1024">
     <meta property="og:image:height" content="1024">
-    <meta property="og:image:alt" content="${cardTitle}">
+    <meta property="og:image:alt" content="AI-Generated Pepe Meme">
+    <meta property="og:image:secure_url" content="${finalImageUrl}">
     <meta property="og:url" content="${request.url}">
     <meta property="og:site_name" content="PEPE.MP3 - AI Meme Generator">
     
