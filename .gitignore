@@ -46,3 +46,12 @@ public/
 
 # Web server (if not used)
 web-server.ts
+
+# Firebase private keys and generated files
+*firebase-adminsdk*.json
+.firebase/
+dataconnect/
+firestore.indexes.json
+firestore.rules
+stop/
+src/dataconnect-generated/
