@@ -173,7 +173,14 @@ bot.command("promo", async (ctx) => {
   try {
     const language = /[а-яё]/i.test(ctx.message?.text || '') ? 'ru' : 'en';
     const promo = await generatePromoMessage(language);
-    await ctx.reply(promo, { parse_mode: "Markdown" });
+    
+    // Create sharing buttons for the promo message
+    const sharingButtons = createSharingButtons(promo);
+    
+    await ctx.reply(promo, { 
+      parse_mode: "Markdown",
+      reply_markup: sharingButtons
+    });
   } catch (error) {
     log(`Error generating promo: ${error}`, "error");
     await ctx.reply("❌ Ошибка при генерации промо-сообщения. Попробуйте позже.");
