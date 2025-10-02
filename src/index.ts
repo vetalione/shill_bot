@@ -18,10 +18,22 @@ const activeGenerations = new Map<string, ActiveGeneration>();
 const userLastRequest = new Map<number, number>(); // userId -> timestamp
 
 // Rate limiting and concurrent generation control
-function canUserGenerate(userId: number): { allowed: boolean; reason?: string } {
+async function canUserGenerate(ctx: Context, userId: number): Promise<{ allowed: boolean; reason?: string; remaining?: number }> {
   const now = Date.now();
   const lastRequest = userLastRequest.get(userId) || 0;
   const timeSinceLastRequest = now - lastRequest;
+  
+  // Check channel membership first
+  const membershipCheck = await checkChannelMembership(ctx, userId);
+  if (!membershipCheck.allowed) {
+    return membershipCheck;
+  }
+  
+  // Check daily generation limit
+  const dailyCheck = checkDailyLimit(userId);
+  if (!dailyCheck.allowed) {
+    return dailyCheck;
+  }
   
   // Rate limit: 30 seconds between requests per user
   if (timeSinceLastRequest < 30000) {
@@ -43,7 +55,7 @@ function canUserGenerate(userId: number): { allowed: boolean; reason?: string } 
     };
   }
 
-  return { allowed: true };
+  return { allowed: true, remaining: dailyCheck.remaining };
 }
 
 function addActiveGeneration(key: string, generation: ActiveGeneration): void {
@@ -67,6 +79,83 @@ setInterval(() => {
     }
   }
 }, 60000); // Check every minute
+
+// Daily generation limits
+interface UserDailyStats {
+  date: string; // YYYY-MM-DD format
+  generations: number;
+}
+
+const userDailyGenerations = new Map<number, UserDailyStats>();
+const DAILY_GENERATION_LIMIT = 10;
+const REQUIRED_CHANNEL = "@pepemp3";
+
+// Check daily generation limit
+function checkDailyLimit(userId: number): { allowed: boolean; remaining?: number; reason?: string } {
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const userStats = userDailyGenerations.get(userId);
+  
+  if (!userStats || userStats.date !== today) {
+    // New day or first time user
+    return { allowed: true, remaining: DAILY_GENERATION_LIMIT - 1 };
+  }
+  
+  if (userStats.generations >= DAILY_GENERATION_LIMIT) {
+    return {
+      allowed: false,
+      reason: `📊 Дневной лимит исчерпан! Вы можете создать ${DAILY_GENERATION_LIMIT} изображений в день. Попробуйте завтра.`
+    };
+  }
+  
+  return { allowed: true, remaining: DAILY_GENERATION_LIMIT - userStats.generations - 1 };
+}
+
+// Update daily generation count
+function updateDailyGenerations(userId: number): void {
+  const today = new Date().toISOString().split('T')[0];
+  const userStats = userDailyGenerations.get(userId);
+  
+  if (!userStats || userStats.date !== today) {
+    userDailyGenerations.set(userId, { date: today, generations: 1 });
+  } else {
+    userStats.generations += 1;
+    userDailyGenerations.set(userId, userStats);
+  }
+}
+
+// Check if user is member of required channel
+async function checkChannelMembership(ctx: Context, userId: number): Promise<{ allowed: boolean; reason?: string }> {
+  try {
+    const member = await ctx.api.getChatMember(REQUIRED_CHANNEL, userId);
+    const allowedStatuses = ['member', 'administrator', 'creator'];
+    
+    if (allowedStatuses.includes(member.status)) {
+      return { allowed: true };
+    } else {
+      return {
+        allowed: false,
+        reason: `🔒 Для использования бота необходимо подписаться на канал ${REQUIRED_CHANNEL}\n\nПосле подписки попробуйте снова.`
+      };
+    }
+  } catch (error) {
+    // If we can't check (user blocked bot, channel is private, etc.)
+    console.log(`❌ Failed to check membership for user ${userId}: ${error}`);
+    return {
+      allowed: false,
+      reason: `🔒 Не удалось проверить подписку на ${REQUIRED_CHANNEL}. Убедитесь, что вы подписаны на канал и попробуйте снова.`
+    };
+  }
+}
+
+// Clean up old daily stats (run once per day)
+setInterval(() => {
+  const today = new Date().toISOString().split('T')[0];
+  for (const [userId, stats] of userDailyGenerations.entries()) {
+    if (stats.date !== today) {
+      userDailyGenerations.delete(userId);
+    }
+  }
+}, 24 * 60 * 60 * 1000); // Check every 24 hours
 
 // Image caching system for lazy Firebase upload
 interface CachedImage {
@@ -337,6 +426,13 @@ bot.command("start", async (ctx) => {
 🌟 **Дополнительные команды:**
 • /moods - список всех настроений  
 • /promo - получить промо-сообщение
+• /limit - проверить свои лимиты
+• /leaderboard - таблица лидеров
+
+📊 **Ограничения:**
+• **${DAILY_GENERATION_LIMIT} генераций в день** на пользователя
+• **Обязательная подписка на ${REQUIRED_CHANNEL}**
+• **30 секунд** между запросами
 
 Попробуйте написать что-то вроде "грустный Pepe" или "happy Pepe cooking"!`;
 
@@ -414,7 +510,7 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
   }
 
   // Check if user can generate
-  const generationCheck = canUserGenerate(userId);
+  const generationCheck = await canUserGenerate(ctx, userId);
   if (!generationCheck.allowed) {
     await ctx.reply(generationCheck.reason!, {
       reply_to_message_id: replyToMessageId
@@ -422,8 +518,10 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
     return;
   }
 
-  // Send "generating" message
-  const generatingMessage = await ctx.reply("🎨 Генерирую изображение Pepe...", {
+  // Send "generating" message with remaining count
+  const remainingText = generationCheck.remaining !== undefined ? 
+    ` (Осталось генераций сегодня: ${generationCheck.remaining})` : '';
+  const generatingMessage = await ctx.reply(`🎨 Генерирую изображение Pepe...${remainingText}`, {
     reply_to_message_id: replyToMessageId
   });
 
@@ -512,6 +610,9 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
     });
 
     log(`Successfully generated image and promo for: "${userPrompt}" (language: ${language}, mood: ${mood})`);
+    
+    // Update daily generation count
+    updateDailyGenerations(userId);
     
     // Remove from active generations
     removeActiveGeneration(generationKey);
@@ -684,7 +785,10 @@ bot.command("status", async (ctx) => {
   
   let statusMessage = `📊 **Статус бота:**\n\n`;
   statusMessage += `🎨 Активных генераций: **${activeCount}**\n`;
-  statusMessage += `💾 Изображений в кэше: **${imageCache.size}**\n\n`;
+  statusMessage += `💾 Изображений в кэше: **${imageCache.size}**\n`;
+  statusMessage += `👥 Пользователей с дневными лимитами: **${userDailyGenerations.size}**\n`;
+  statusMessage += `📊 Дневной лимит: **${DAILY_GENERATION_LIMIT}** генераций\n`;
+  statusMessage += `📢 Обязательный канал: **${REQUIRED_CHANNEL}**\n\n`;
   
   if (activeCount > 0) {
     statusMessage += `**Активные генерации:**\n`;
@@ -695,6 +799,33 @@ bot.command("status", async (ctx) => {
   }
   
   await ctx.reply(statusMessage, { parse_mode: "Markdown" });
+});
+
+// User limit check command
+bot.command("limit", async (ctx) => {
+  const userId = ctx.from?.id;
+  if (!userId) {
+    await ctx.reply("❌ Ошибка идентификации пользователя");
+    return;
+  }
+
+  const dailyCheck = checkDailyLimit(userId);
+  const today = new Date().toISOString().split('T')[0];
+  const userStats = userDailyGenerations.get(userId);
+  const used = (userStats && userStats.date === today) ? userStats.generations : 0;
+  
+  let limitMessage = `📊 **Ваши лимиты:**\n\n`;
+  limitMessage += `🎨 Использовано сегодня: **${used}/${DAILY_GENERATION_LIMIT}**\n`;
+  limitMessage += `⏰ Лимит обновляется: **каждый день в 00:00 UTC**\n`;
+  limitMessage += `📢 Обязательная подписка: **${REQUIRED_CHANNEL}**\n\n`;
+  
+  if (dailyCheck.allowed && dailyCheck.remaining !== undefined) {
+    limitMessage += `✅ Осталось генераций: **${dailyCheck.remaining}**`;
+  } else if (!dailyCheck.allowed) {
+    limitMessage += `❌ ${dailyCheck.reason}`;
+  }
+  
+  await ctx.reply(limitMessage, { parse_mode: "Markdown" });
 });
 
 // Start the bot
