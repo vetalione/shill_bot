@@ -4,17 +4,31 @@ import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 
-// Firebase configuration
-const serviceAccount: ServiceAccount = {
-  projectId: process.env.FIREBASE_PROJECT_ID!,
-  privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')!,
-  clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
-};
+// Firebase configuration - support both local and Railway deployment
+let serviceAccount: ServiceAccount;
+
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+  // Railway deployment - use base64 encoded JSON
+  try {
+    const decodedCredentials = Buffer.from(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON, 'base64').toString('utf-8');
+    serviceAccount = JSON.parse(decodedCredentials);
+  } catch (error) {
+    console.error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON:', error);
+    throw new Error('Invalid Firebase credentials format');
+  }
+} else {
+  // Local development - use individual environment variables
+  serviceAccount = {
+    projectId: process.env.FIREBASE_PROJECT_ID!,
+    privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')!,
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+  };
+}
 
 // Initialize Firebase Admin
 const firebaseApp = initializeApp({
   credential: cert(serviceAccount),
-  storageBucket: `${process.env.FIREBASE_PROJECT_ID}.firebasestorage.app`
+  storageBucket: `${serviceAccount.projectId}.firebasestorage.app`
 });
 
 const storage = getStorage(firebaseApp);
