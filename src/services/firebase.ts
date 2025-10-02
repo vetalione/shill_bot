@@ -10,14 +10,43 @@ let serviceAccount: ServiceAccount;
 if (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
   // Railway deployment - use base64 encoded JSON
   try {
-    const decodedCredentials = Buffer.from(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON, 'base64').toString('utf-8');
+    console.log('🔧 Using base64 Firebase credentials from environment');
+    const base64String = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON.trim();
+    console.log(`📊 Base64 string length: ${base64String.length}`);
+    
+    if (!base64String || base64String.length < 100) {
+      throw new Error('Base64 string appears to be too short or empty');
+    }
+    
+    const decodedCredentials = Buffer.from(base64String, 'base64').toString('utf-8');
+    console.log(`📋 Decoded JSON length: ${decodedCredentials.length}`);
+    console.log(`🔍 JSON preview: ${decodedCredentials.substring(0, 100)}...`);
+    
     serviceAccount = JSON.parse(decodedCredentials);
+    console.log(`✅ Firebase credentials parsed successfully. Project: ${serviceAccount.projectId}`);
   } catch (error) {
-    console.error('Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON:', error);
-    throw new Error('Invalid Firebase credentials format');
+    console.error('❌ Failed to parse GOOGLE_APPLICATION_CREDENTIALS_JSON:', error);
+    console.log('💡 Falling back to individual environment variables...');
+    
+    // Fallback to individual environment variables
+    if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_PRIVATE_KEY || !process.env.FIREBASE_CLIENT_EMAIL) {
+      throw new Error('Firebase credentials not available. Please set either GOOGLE_APPLICATION_CREDENTIALS_JSON or individual Firebase environment variables');
+    }
+    
+    serviceAccount = {
+      projectId: process.env.FIREBASE_PROJECT_ID!,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')!,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL!,
+    };
   }
 } else {
   // Local development - use individual environment variables
+  console.log('🔧 Using individual Firebase environment variables');
+  
+  if (!process.env.FIREBASE_PROJECT_ID || !process.env.FIREBASE_PRIVATE_KEY || !process.env.FIREBASE_CLIENT_EMAIL) {
+    throw new Error('Firebase credentials not available. Please set FIREBASE_PROJECT_ID, FIREBASE_PRIVATE_KEY, and FIREBASE_CLIENT_EMAIL environment variables');
+  }
+  
   serviceAccount = {
     projectId: process.env.FIREBASE_PROJECT_ID!,
     privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n')!,

@@ -31,12 +31,25 @@
 ### 2. Set Environment Variables
 In Railway dashboard, go to Variables tab and add:
 
+**Option 1: Base64 Firebase JSON (Recommended)**
 ```
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 GEMINI_API_KEY=your_gemini_api_key  
 GOOGLE_APPLICATION_CREDENTIALS_JSON=your_base64_encoded_service_account_json
 NODE_ENV=production
 ```
+
+**Option 2: Individual Firebase Variables (Fallback)**
+```
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+GEMINI_API_KEY=your_gemini_api_key
+FIREBASE_PROJECT_ID=pepe-shillbot
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-fbsvc@pepe-shillbot.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY_HERE\n-----END PRIVATE KEY-----"
+NODE_ENV=production
+```
+
+**Note:** Make sure the base64 string is complete and doesn't have line breaks!
 
 ### 3. Deploy
 1. Railway will automatically build and deploy
