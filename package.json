@@ -43,7 +43,8 @@
     "express": "^5.1.0",
     "firebase": "^12.3.0",
     "firebase-admin": "^13.5.0",
-    "grammy": "^1.28.0"
+    "grammy": "^1.28.0",
+    "sharp": "^0.34.4"
   },
   "devDependencies": {
     "@types/node": "^20.14.12",

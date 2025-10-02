@@ -2,10 +2,73 @@ import { Bot, GrammyError, Context, InputFile, InlineKeyboard } from "grammy";
 import "dotenv/config";
 import { generateGeminiImage, generatePromoMessage } from "./providers/gemini.js";
 import { isGroupChat, isPrivateChat, extractBotMention, validatePrompt, formatError, formatGeminiError, log } from "./utils.js";
-import { uploadImageToFirebase } from "./services/firebase.js";
+import { uploadImageToFirebase, createTwitterCard as createTwitterCardPage } from "./services/firebase.js";
+import sharp from 'sharp';
+
+// Image caching system for lazy Firebase upload
+interface CachedImage {
+  originalBuffer: Buffer;
+  compressedBuffer: Buffer;
+  filename: string;
+  firebaseUrl?: string; // Uploaded only when needed
+}
+
+const imageCache = new Map<string, CachedImage>();
+
+// Lazy Firebase upload - uploads only when needed
+async function ensureFirebaseUpload(messageId: string): Promise<string | null> {
+  const cached = imageCache.get(messageId);
+  if (!cached) {
+    console.log(`❌ No cached image found for ${messageId}`);
+    return null;
+  }
+
+  // If already uploaded, return existing URL
+  if (cached.firebaseUrl) {
+    console.log(`✅ Using cached Firebase URL for ${messageId}`);
+    return cached.firebaseUrl;
+  }
+
+  // Upload compressed image to Firebase
+  try {
+    console.log(`🔄 Lazy uploading image to Firebase for ${messageId}`);
+    const firebaseUrl = await uploadImageToFirebase(cached.compressedBuffer, cached.filename);
+    
+    // Cache the URL for future use
+    cached.firebaseUrl = firebaseUrl;
+    firebaseImageUrls[messageId] = firebaseUrl;
+    
+    console.log(`✅ Lazy upload complete: ${firebaseUrl}`);
+    return firebaseUrl;
+  } catch (error) {
+    console.error(`❌ Lazy upload failed for ${messageId}:`, error);
+    return null;
+  }
+}
+
+// Compress image for optimal Telegram sharing
+async function compressImageForTelegram(imageBuffer: Buffer): Promise<Buffer> {
+  console.log(`🗜️ Compressing image for Telegram inline sharing...`);
+  const compressedBuffer = await sharp(imageBuffer)
+    .resize(1024, 1024, { 
+      fit: 'inside', 
+      withoutEnlargement: true 
+    })
+    .jpeg({ 
+      quality: 85,
+      mozjpeg: true 
+    })
+    .toBuffer();
+  
+  const originalSize = Math.round(imageBuffer.length / 1024);
+  const compressedSize = Math.round(compressedBuffer.length / 1024);
+  console.log(`📏 Image size: ${originalSize}KB → ${compressedSize}KB`);
+  
+  return compressedBuffer;
+}
 
 // Twitter Card creation function
-async function createTwitterCard(shareData: {imageUrl: string, title: string, description: string, twitterText: string}): Promise<string> {
+async function createTwitterCardLegacy(shareData: {imageUrl: string, title: string, description: string, twitterText: string}): Promise<string> {
   try {
     // In production, this would call your Firebase Functions or web service
     // For now, we'll create a simple encoded URL
@@ -43,15 +106,9 @@ function getLeaderboard(): Array<{name: string, points: number}> {
     .slice(0, 10);
 }
 
-function createSharingButtons(promoText: string, firebaseImageUrl?: string): InlineKeyboard {
-  // Store promo message with short ID for sharing
-  const messageId = `msg${messageIdCounter++}`;
-  promoMessages[messageId] = promoText;
-  
-  // Store Firebase image URL if available
-  if (firebaseImageUrl) {
-    firebaseImageUrls[messageId] = firebaseImageUrl;
-  }
+function createSharingButtons(promoText: string, cachedMessageId: string): InlineKeyboard {
+  // Store promo message for sharing
+  promoMessages[cachedMessageId] = promoText;
   
   // Create Twitter version of the message
   let twitterVersion = promoText
@@ -71,7 +128,7 @@ function createSharingButtons(promoText: string, firebaseImageUrl?: string): Inl
     twitterVersion = twitterVersion.substring(0, 240) + '... @PEPEGOTAVOICE';
   }
   
-  // Create Twitter Intent URL
+  // Create Twitter Intent URL (Twitter Cards will be handled when user clicks)
   const encodedText = encodeURIComponent(twitterVersion);
   let twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
   
@@ -81,13 +138,9 @@ function createSharingButtons(promoText: string, firebaseImageUrl?: string): Inl
     twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(fallbackText)}`;
   }
   
-  // Create Telegram share URL
-  const telegramText = promoText.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1');
-  const encodedTelegramText = encodeURIComponent(telegramText);
-  const telegramShareUrl = `https://t.me/share/url?url=https://t.me/pepemp3&text=${encodedTelegramText}`;
-  
+  // Use Switch Inline Query for Telegram sharing (will trigger lazy Firebase upload)
   return new InlineKeyboard()
-    .url('🫂 Поделиться в Telegram', telegramShareUrl)
+    .switchInline('🫂 Поделиться в Telegram', `share:${cachedMessageId}`)
     .row()
     .url('🐦 Поделиться в Twitter', twitterUrl);
 }
@@ -207,8 +260,11 @@ bot.command("promo", async (ctx) => {
     const language = /[а-яё]/i.test(ctx.message?.text || '') ? 'ru' : 'en';
     const promo = await generatePromoMessage(language);
     
+    // Create temporary messageId for promo-only sharing
+    const promoMessageId = `promo${Date.now()}`;
+    
     // Create sharing buttons for the promo message
-    const sharingButtons = createSharingButtons(promo);
+    const sharingButtons = createSharingButtons(promo, promoMessageId);
     
     await ctx.reply(promo, { 
       parse_mode: "Markdown",
@@ -283,21 +339,31 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
       throw new Error("Failed to generate image");
     }
 
-    // Upload image to Firebase for Twitter sharing (if sharing enabled)
-    let firebaseImageUrl: string | undefined;
-    if (promoMessage) {
-      try {
-        const filename = `pepe_${Date.now()}_${Math.random().toString(36).substring(2)}.jpg`;
-        firebaseImageUrl = await uploadImageToFirebase(Buffer.from(imageBuffer), filename);
-        log(`🔥 Image uploaded to Firebase: ${firebaseImageUrl}`);
-      } catch (error) {
-        log(`❌ Firebase upload failed: ${error}`);
-        // Continue without Firebase - sharing will work but without image preview
-      }
+    // Compress image and store in cache for lazy Firebase upload
+    const filename = `pepe_${Date.now()}_${Math.random().toString(36).substring(2)}.jpg`;
+    const messageId = `msg${messageIdCounter++}`;
+    
+    try {
+      // Compress image immediately
+      const compressedBuffer = await compressImageForTelegram(Buffer.from(imageBuffer));
+      
+      // Store in cache for lazy upload
+      imageCache.set(messageId, {
+        originalBuffer: Buffer.from(imageBuffer),
+        compressedBuffer: compressedBuffer,
+        filename: filename
+        // firebaseUrl will be set when uploaded lazily
+      });
+      
+      console.log(`� Image cached for lazy upload: ${messageId}`);
+      
+    } catch (error) {
+      log(`❌ Image compression failed: ${error}`);
+      // Continue without caching - sharing will work but without optimization
     }
 
-    // Create sharing buttons with Firebase URL
-    const sharingButtons = promoMessage ? createSharingButtons(promoMessage, firebaseImageUrl) : undefined;
+    // Create sharing buttons (Firebase upload will happen lazily)
+    const sharingButtons = promoMessage ? createSharingButtons(promoMessage, messageId) : undefined;
     
     // Delete the "generating" message
     if (ctx.chat) {
@@ -351,9 +417,81 @@ bot.on("callback_query:data", async (ctx) => {
   }
 });
 
-// Handle inline queries (simplified - mainly for bot info)
+// Handle inline queries (for sharing content)
 bot.on("inline_query", async (ctx) => {
   const query = ctx.inlineQuery.query;
+  
+  console.log(`🔍 Inline query received: "${query}"`);
+  
+  // Handle sharing queries
+  if (query.startsWith("share:")) {
+    const messageId = query.split("share:")[1];
+    const promoMessage = promoMessages[messageId];
+    
+    console.log(`📝 Found promo message for ${messageId}:`, !!promoMessage);
+    
+    if (!promoMessage) {
+      console.log(`❌ Message ${messageId} not found in storage`);
+      console.log(`📋 Available messages:`, Object.keys(promoMessages));
+      await ctx.answerInlineQuery([
+        {
+          type: "article",
+          id: "not_found",
+          title: "❌ Сообщение не найдено",
+          description: "Сгенерируйте новое изображение для шеринга",
+          input_message_content: {
+            message_text: "🐸 **ShillBot** - генератор AI изображений Pepe\n\n🎨 Напишите боту что должен делать Pepe!\n\n💬 [Telegram](https://t.me/pepemp3) • 🐦 [X/Twitter](https://x.com/pepegotavoice)",
+            parse_mode: "Markdown"
+          }
+        }
+      ]);
+      return;
+    }
+
+    // Try to get Firebase URL (lazy upload if needed)
+    const firebaseImageUrl = await ensureFirebaseUpload(messageId);
+    
+    if (firebaseImageUrl) {
+      // Return photo result with promo message
+      console.log(`📸 Returning photo result with caption`);
+      console.log(`🔗 Image URL: ${firebaseImageUrl}`);
+      
+      await ctx.answerInlineQuery([
+        {
+          type: "photo",
+          id: `share_${messageId}`,
+          photo_url: firebaseImageUrl,
+          thumbnail_url: firebaseImageUrl,
+          title: "🐸 Поделиться Pepe изображением",
+          description: "AI-генерированный Pepe с промо-сообщением",
+          caption: promoMessage,
+          parse_mode: "Markdown"
+        }
+      ], {
+        cache_time: 1,
+        is_personal: true
+      });
+    } else {
+      // Fallback to text-only if no image or upload failed
+      console.log(`📝 Returning text-only result (no image available)`);
+      await ctx.answerInlineQuery([
+        {
+          type: "article",
+          id: `share_text_${messageId}`,
+          title: "🐸 Поделиться промо-сообщением",
+          description: "Текстовое промо-сообщение $PEPE.MP3",
+          input_message_content: {
+            message_text: promoMessage,
+            parse_mode: "Markdown"
+          }
+        }
+      ], {
+        cache_time: 1,
+        is_personal: true
+      });
+    }
+    return;
+  }
   
   // Default inline query response
   await ctx.answerInlineQuery([
