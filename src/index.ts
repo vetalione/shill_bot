@@ -179,9 +179,9 @@ async function createSharingButtons(promoText: string, cachedMessageId: string):
   
   // Use Switch Inline Query for Telegram sharing (will trigger lazy Firebase upload)
   return new InlineKeyboard()
-    .switchInline('🫂 Поделиться в Telegram', `share:${cachedMessageId}`)
+    .switchInline('🫂 Поделиться в Telegram (+1 бал)', `share:${cachedMessageId}`)
     .row()
-    .url('🐦 Поделиться в Twitter', twitterUrl);
+    .url('🐦 Поделиться в Twitter (+2 балла)', twitterUrl);
 }
 
 // Bot configuration
