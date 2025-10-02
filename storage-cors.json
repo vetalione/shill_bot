@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["https://pepe-shillbot.web.app", "https://pepe-shillbot.firebaseapp.com", "*"],
+    "method": ["GET", "HEAD"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin"]
+  }
+]

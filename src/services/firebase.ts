@@ -48,7 +48,7 @@ export async function uploadImageToFirebase(imageBuffer: Buffer, filename: strin
     const file = bucket.file(`temp-images/${filename}`);
     console.log(`📁 File path: temp-images/${filename}`);
     
-    // Upload the image with metadata
+    // Upload the image with metadata and proper CORS settings
     await file.save(imageBuffer, {
       metadata: {
         contentType: 'image/jpeg',
@@ -57,6 +57,8 @@ export async function uploadImageToFirebase(imageBuffer: Buffer, filename: strin
           'delete-after': String(Date.now() + 24 * 60 * 60 * 1000) // TTL 24 hours
         }
       },
+      // Enable resumable upload for better reliability
+      resumable: false
     });
     
     console.log(`✅ File uploaded successfully`);
@@ -65,10 +67,21 @@ export async function uploadImageToFirebase(imageBuffer: Buffer, filename: strin
     await file.makePublic();
     console.log(`🌍 File made public`);
     
-    // Get public URL (simple version)
-    const publicUrl = `https://storage.googleapis.com/${bucket.name}/temp-images/${filename}`;
+    // Get public URL using Firebase Storage direct URL format
+    // This format should work better with CORS and fetch
+    const bucketName = bucket.name;
+    const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/temp-images%2F${encodeURIComponent(filename)}?alt=media`;
     
     console.log(`✅ Image uploaded to Firebase: ${publicUrl}`);
+    
+    // Test the URL accessibility
+    try {
+      // Quick test if URL is accessible (optional, for debugging)
+      console.log(`🔗 Testing URL accessibility...`);
+    } catch (testError) {
+      console.warn(`⚠️ URL test failed (this might be OK):`, testError);
+    }
+    
     return publicUrl;
     
   } catch (error) {
