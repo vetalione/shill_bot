@@ -1,6 +1,8 @@
 import { initializeApp, cert, ServiceAccount } from 'firebase-admin/app';
 import { getStorage } from 'firebase-admin/storage';
 import sharp from 'sharp';
+import fs from 'fs';
+import path from 'path';
 
 // Firebase configuration
 const serviceAccount: ServiceAccount = {
@@ -140,8 +142,6 @@ export async function createTwitterCard(imageUrl: string, cardId: string, descri
     const bucket = storage.bucket();
     
     // Read the card template
-    const fs = require('fs');
-    const path = require('path');
     const templatePath = path.join(process.cwd(), 'public', 'card.html');
     let cardHtml = fs.readFileSync(templatePath, 'utf8');
     

@@ -127,10 +127,39 @@ function createSharingButtons(promoText: string, cachedMessageId: string): Inlin
   if (twitterVersion.length > 250) { // Leave some space for hashtags
     twitterVersion = twitterVersion.substring(0, 240) + '... @PEPEGOTAVOICE';
   }
+
+  // Create Twitter Intent URL with Twitter Card support
+  let twitterUrl: string;
   
-  // Create Twitter Intent URL (Twitter Cards will be handled when user clicks)
-  const encodedText = encodeURIComponent(twitterVersion);
-  let twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
+  // Check if we have cached image for Twitter Card
+  const cachedImage = imageCache.get(cachedMessageId);
+  if (cachedImage) {
+    // Create Twitter Card URL using Firebase Functions
+    ensureFirebaseUpload(cachedMessageId)
+      .then(firebaseUrl => {
+        if (firebaseUrl) {
+          console.log(`🃏 Creating Twitter Card with image: ${firebaseUrl}`);
+        }
+      })
+      .catch(error => {
+        console.error('❌ Twitter Card creation failed:', error);
+      });
+    
+    // Create Twitter Card URL for rich preview
+    const cardTitle = encodeURIComponent("AI-Generated Pepe Meme");
+    const cardDescription = encodeURIComponent(twitterVersion);
+    // We'll use a placeholder URL that will be dynamically generated when the link is accessed
+    const cardUrl = `https://us-central1-pepe-shillbot.cloudfunctions.net/twitterCard?messageId=${cachedMessageId}`;
+    
+    // Include card URL in tweet for rich preview
+    const tweetWithCard = `${twitterVersion}\n\n🖼️ ${cardUrl}`;
+    const encodedText = encodeURIComponent(tweetWithCard);
+    twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
+  } else {
+    // Fallback to text-only tweet
+    const encodedText = encodeURIComponent(twitterVersion);
+    twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
+  }
   
   // Fallback for very long URLs
   if (twitterUrl.length > 2000) {
