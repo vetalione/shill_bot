@@ -346,35 +346,22 @@ bot.on("callback_query:data", async (ctx) => {
         .replace(/\n\n💬.*$/, '\n\n@PEPEGOTAVOICE');
       
       await ctx.answerCallbackQuery({
-        text: "Открываю умный шеринг...",
+        text: "Открываю Twitter...",
         show_alert: false
       });
       
-      let shareUrl: string;
-      let instructions: string;
+      // Simple and reliable Twitter Intent URL
+      const encodedText = encodeURIComponent(twitterVersion);
+      const shareUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
       
-      if (firebaseImageUrl) {
-        // Create Native Share URL with image and text
-        const shareParams = new URLSearchParams({
-          image: firebaseImageUrl,
-          text: twitterVersion
-        });
-        
-        shareUrl = `https://pepe-shillbot.web.app/share?${shareParams.toString()}`;
-        
-        instructions = `🐦 **Умный шеринг в Twitter:**\n\n📱 **На мобильном:** Автоматически откроется меню "Поделиться" с готовым изображением и текстом!\n\n💻 **На компьютере:** Откроется страница с инструкциями для ручного шеринга\n\n1. [� Открыть умный шеринг](${shareUrl})\n2. После публикации нажмите кнопку ниже\n\n✨ *Изображение и текст автоматически подготовлены для публикации!*`;
-      } else {
-        // Fallback to text-only sharing
-        const twitterText = encodeURIComponent(twitterVersion);
-        shareUrl = `https://twitter.com/intent/tweet?text=${twitterText}`;
-        
-        instructions = `🐦 **Поделиться в Twitter:**\n\n📝 **Текстовый пост готов!**\n\n1. [Открыть Twitter и опубликовать](${shareUrl})\n2. Сохраните изображение Pepe выше и прикрепите в Twitter\n3. После публикации нажмите кнопку ниже\n\n💡 *Совет: Долгое нажатие на изображение → Сохранить*`;
-      }
+      const instructions = `🐦 **Поделиться в Twitter:**\n\n1. [🔗 Открыть Twitter](${shareUrl})\n2. Текст уже подготовлен - просто нажмите "Tweet"\n3. Прикрепите изображение Pepe (сохраните из сообщения выше)\n\n💡 *Совет: Долгое нажатие на изображение → Сохранить → Прикрепить в Twitter*`;
       
       // Send follow-up with share link and confirmation button
       await ctx.reply(instructions, {
         parse_mode: "Markdown",
         reply_markup: new InlineKeyboard()
+          .text('🐦 Открыть Twitter', shareUrl)
+          .row()
           .text('✅ Подтвердить публикацию (+2 балла)', 'twitter_confirmed'),
         reply_to_message_id: ctx.callbackQuery.message?.message_id
       });
