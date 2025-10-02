@@ -346,36 +346,32 @@ bot.on("callback_query:data", async (ctx) => {
         .replace(/\n\n💬.*$/, '\n\n@PEPEGOTAVOICE');
       
       await ctx.answerCallbackQuery({
-        text: "Создаю Twitter Card с изображением...",
+        text: "Открываю умный шеринг...",
         show_alert: false
       });
       
-      let twitterUrl: string;
+      let shareUrl: string;
       let instructions: string;
       
       if (firebaseImageUrl) {
-        // Create Twitter Card URL with image preview
-        const shareData = {
-          imageUrl: firebaseImageUrl,
-          title: "🐸 AI Generated Pepe",
-          description: twitterVersion,
-          twitterText: twitterVersion
-        };
+        // Create Native Share URL with image and text
+        const shareParams = new URLSearchParams({
+          image: firebaseImageUrl,
+          text: twitterVersion
+        });
         
-        // Create share card (would call our Firebase web service)
-        const cardUrl = await createTwitterCard(shareData);
-        twitterUrl = `https://twitter.com/intent/tweet?url=${encodeURIComponent(cardUrl)}`;
+        shareUrl = `https://pepe-shillbot.web.app/share?${shareParams.toString()}`;
         
-        instructions = `🐦 **Поделиться в Twitter с изображением:**\n\n✨ **Ваша ссылка с превью изображения готова!**\n\n1. [🔗 Открыть Twitter и опубликовать](${twitterUrl})\n2. Twitter автоматически покажет изображение в посте\n3. После публикации нажмите кнопку ниже\n\n🎯 *Теперь ваш пост будет с красивым превью Pepe!*`;
+        instructions = `🐦 **Умный шеринг в Twitter:**\n\n📱 **На мобильном:** Автоматически откроется меню "Поделиться" с готовым изображением и текстом!\n\n💻 **На компьютере:** Откроется страница с инструкциями для ручного шеринга\n\n1. [� Открыть умный шеринг](${shareUrl})\n2. После публикации нажмите кнопку ниже\n\n✨ *Изображение и текст автоматически подготовлены для публикации!*`;
       } else {
         // Fallback to text-only sharing
         const twitterText = encodeURIComponent(twitterVersion);
-        twitterUrl = `https://twitter.com/intent/tweet?text=${twitterText}`;
+        shareUrl = `https://twitter.com/intent/tweet?text=${twitterText}`;
         
-        instructions = `🐦 **Поделиться в Twitter:**\n\n📝 **Текстовый пост готов!**\n\n1. [Открыть Twitter и опубликовать](${twitterUrl})\n2. После публикации нажмите кнопку ниже\n\n💡 *Изображение не удалось загрузить, но текст готов к публикации*`;
+        instructions = `🐦 **Поделиться в Twitter:**\n\n📝 **Текстовый пост готов!**\n\n1. [Открыть Twitter и опубликовать](${shareUrl})\n2. Сохраните изображение Pepe выше и прикрепите в Twitter\n3. После публикации нажмите кнопку ниже\n\n💡 *Совет: Долгое нажатие на изображение → Сохранить*`;
       }
       
-      // Send follow-up with Twitter link and confirmation button
+      // Send follow-up with share link and confirmation button
       await ctx.reply(instructions, {
         parse_mode: "Markdown",
         reply_markup: new InlineKeyboard()

@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "public": "dist/public",
+    "public": "public",
     "ignore": [
       "firebase.json",
       "**/.*",
@@ -8,19 +8,25 @@
     ],
     "rewrites": [
       {
-        "source": "/twitter/**",
-        "function": "twitterCard"
+        "source": "/share**",
+        "destination": "/share.html"
       },
       {
-        "source": "/api/**",
-        "function": "api"
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ],
+    "headers": [
+      {
+        "source": "/share.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "max-age=300"
+          }
+        ]
       }
     ]
-  },
-  "functions": {
-    "source": "dist/functions",
-    "runtime": "nodejs18",
-    "predeploy": ["npm run build"]
   },
   "storage": {
     "rules": "storage.rules"

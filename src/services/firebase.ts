@@ -11,7 +11,7 @@ const serviceAccount: ServiceAccount = {
 // Initialize Firebase Admin
 const firebaseApp = initializeApp({
   credential: cert(serviceAccount),
-  storageBucket: `${process.env.FIREBASE_PROJECT_ID}.appspot.com`
+  storageBucket: `${process.env.FIREBASE_PROJECT_ID}.firebasestorage.app`
 });
 
 const storage = getStorage(firebaseApp);
@@ -24,8 +24,29 @@ const storage = getStorage(firebaseApp);
  */
 export async function uploadImageToFirebase(imageBuffer: Buffer, filename: string): Promise<string> {
   try {
+    console.log(`🔥 Starting Firebase upload for: ${filename}`);
+    console.log(`📦 Project ID: ${process.env.FIREBASE_PROJECT_ID}`);
+    
     const bucket = storage.bucket();
+    console.log(`🪣 Bucket name: ${bucket.name}`);
+    
+    // Check if bucket exists, if not provide helpful error
+    try {
+      const [exists] = await bucket.exists();
+      if (!exists) {
+        console.error(`❌ Bucket ${bucket.name} does not exist!`);
+        console.error(`🔧 Please go to Firebase Console and initialize Storage:`);
+        console.error(`🔗 https://console.firebase.google.com/project/${process.env.FIREBASE_PROJECT_ID}/storage`);
+        throw new Error(`Storage bucket not initialized. Please set up Firebase Storage in the console.`);
+      }
+      console.log(`✅ Bucket exists and accessible`);
+    } catch (bucketError) {
+      console.error(`❌ Cannot access bucket:`, bucketError);
+      throw new Error(`Cannot access Firebase Storage bucket. Please ensure Storage is properly initialized.`);
+    }
+    
     const file = bucket.file(`temp-images/${filename}`);
+    console.log(`📁 File path: temp-images/${filename}`);
     
     // Upload the image with metadata
     await file.save(imageBuffer, {
@@ -36,21 +57,24 @@ export async function uploadImageToFirebase(imageBuffer: Buffer, filename: strin
           'delete-after': String(Date.now() + 24 * 60 * 60 * 1000) // TTL 24 hours
         }
       },
-      public: true, // Make publicly accessible
     });
     
-    // Get public URL
-    const [url] = await file.getSignedUrl({
-      action: 'read',
-      expires: Date.now() + 24 * 60 * 60 * 1000, // 24 hours
-    });
+    console.log(`✅ File uploaded successfully`);
     
-    console.log(`✅ Image uploaded to Firebase: ${filename}`);
-    return url;
+    // Make file publicly readable
+    await file.makePublic();
+    console.log(`🌍 File made public`);
+    
+    // Get public URL (simple version)
+    const publicUrl = `https://storage.googleapis.com/${bucket.name}/temp-images/${filename}`;
+    
+    console.log(`✅ Image uploaded to Firebase: ${publicUrl}`);
+    return publicUrl;
     
   } catch (error) {
-    console.error('❌ Firebase upload error:', error);
-    throw new Error('Failed to upload image to Firebase');
+    console.error('❌ Firebase upload error details:', error);
+    console.error('❌ Error message:', (error as Error).message);
+    throw new Error(`Failed to upload image to Firebase: ${(error as Error).message}`);
   }
 }
 
