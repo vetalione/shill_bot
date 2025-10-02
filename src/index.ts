@@ -134,27 +134,31 @@ function createSharingButtons(promoText: string, cachedMessageId: string): Inlin
   // Check if we have cached image for Twitter Card
   const cachedImage = imageCache.get(cachedMessageId);
   if (cachedImage) {
-    // Create Twitter Card URL using Firebase Functions
-    ensureFirebaseUpload(cachedMessageId)
-      .then(firebaseUrl => {
-        if (firebaseUrl) {
-          console.log(`🃏 Creating Twitter Card with image: ${firebaseUrl}`);
-        }
-      })
-      .catch(error => {
-        console.error('❌ Twitter Card creation failed:', error);
-      });
-    
-    // Create Twitter Card URL for rich preview
+    // Create Twitter Card URL for the tweet
     const cardTitle = encodeURIComponent("AI-Generated Pepe Meme");
     const cardDescription = encodeURIComponent(twitterVersion);
-    // We'll use a placeholder URL that will be dynamically generated when the link is accessed
-    const cardUrl = `https://us-central1-pepe-shillbot.cloudfunctions.net/twitterCard?messageId=${cachedMessageId}`;
+    const cardUrl = `https://us-central1-pepe-shillbot.cloudfunctions.net/twitterCard?messageId=${cachedMessageId}&title=${cardTitle}&description=${cardDescription}`;
     
     // Include card URL in tweet for rich preview
     const tweetWithCard = `${twitterVersion}\n\n🖼️ ${cardUrl}`;
     const encodedText = encodeURIComponent(tweetWithCard);
     twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
+    
+    // Also create Twitter Card URL with real image URL asynchronously for better preview
+    ensureFirebaseUpload(cachedMessageId)
+      .then(firebaseUrl => {
+        if (firebaseUrl) {
+          console.log(`🃏 Creating Twitter Card with image: ${firebaseUrl}`);
+          
+          // Log the enhanced card URL (for debugging)
+          const cardImageUrl = encodeURIComponent(firebaseUrl);
+          const enhancedCardUrl = `https://us-central1-pepe-shillbot.cloudfunctions.net/twitterCard?imageUrl=${cardImageUrl}&title=${cardTitle}&description=${cardDescription}`;
+          console.log(`🃏 Enhanced Twitter Card URL: ${enhancedCardUrl}`);
+        }
+      })
+      .catch(error => {
+        console.error('❌ Twitter Card creation failed:', error);
+      });
   } else {
     // Fallback to text-only tweet
     const encodedText = encodeURIComponent(twitterVersion);
