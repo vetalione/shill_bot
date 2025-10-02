@@ -81,8 +81,13 @@ function createSharingButtons(promoText: string, firebaseImageUrl?: string): Inl
     twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(fallbackText)}`;
   }
   
+  // Create Telegram share URL
+  const telegramText = promoText.replace(/\*\*(.*?)\*\*/g, '$1').replace(/\*(.*?)\*/g, '$1');
+  const encodedTelegramText = encodeURIComponent(telegramText);
+  const telegramShareUrl = `https://t.me/share/url?url=https://t.me/pepemp3&text=${encodedTelegramText}`;
+  
   return new InlineKeyboard()
-    .text('🫂 Поделиться в Telegram', `share_tg:${messageId}`)
+    .url('🫂 Поделиться в Telegram', telegramShareUrl)
     .row()
     .url('🐦 Поделиться в Twitter', twitterUrl);
 }
@@ -337,47 +342,12 @@ bot.on("callback_query:data", async (ctx) => {
   const userId = ctx.from.id.toString();
   const userName = ctx.from.first_name || ctx.from.username || "Unknown";
   
-  if (data.startsWith("share_tg:")) {
-    // Extract message ID for Telegram sharing
-    const messageId = data.split("share_tg:")[1];
-    const promoMessage = promoMessages[messageId];
-    
-    if (promoMessage) {
-      // Award 1 point for Telegram sharing
-      const totalPoints = addPoints(userId, 1);
-      
-      await ctx.answerCallbackQuery({
-        text: `+1 очко! У вас ${totalPoints} очков. Просто перепошлите это сообщение!`,
-        show_alert: true
-      });
-      
-      // Send instruction message
-      await ctx.reply(
-        `📤 **Поделиться в Telegram:**\n\nПросто перепошлите сообщение с картинкой выше ↑ в любую группу или чат!\n\nℹ️ *Нажмите и удерживайте сообщение с картинкой, затем выберите "Перепослать"*`,
-        {
-          parse_mode: "Markdown",
-          reply_to_message_id: ctx.callbackQuery.message?.message_id
-        }
-      );
-      
-      log(`User ${userName} (${userId}) earned 1 point for TG sharing. Total: ${totalPoints}`);
-    } else {
-      await ctx.answerCallbackQuery({
-        text: "Сообщение не найдено",
-        show_alert: true
-      });
-    }
-    
-  } else if (data === "twitter_confirmed") {
-    // Award 2 points when user confirms Twitter sharing
-    const totalPoints = addPoints(userId, 2);
-    
+  // Legacy handler for old Twitter confirmation buttons (can be removed later)
+  if (data === "twitter_confirmed") {
     await ctx.answerCallbackQuery({
-      text: `+2 очка! У вас теперь ${totalPoints} очков за публикацию в Twitter!`,
-      show_alert: true
+      text: "✅ Спасибо за использование бота!",
+      show_alert: false
     });
-    
-    log(`User ${userName} (${userId}) earned 2 points for confirmed Twitter sharing. Total: ${totalPoints}`);
   }
 });
 
