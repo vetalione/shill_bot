@@ -5,6 +5,69 @@ import { isGroupChat, isPrivateChat, extractBotMention, validatePrompt, formatEr
 import { uploadImageToFirebase, createTwitterCard as createTwitterCardPage } from "./services/firebase.js";
 import sharp from 'sharp';
 
+// Concurrent generation management
+interface ActiveGeneration {
+  userId: number;
+  chatId: number;
+  prompt: string;
+  startTime: number;
+  generatingMessageId: number;
+}
+
+const activeGenerations = new Map<string, ActiveGeneration>();
+const userLastRequest = new Map<number, number>(); // userId -> timestamp
+
+// Rate limiting and concurrent generation control
+function canUserGenerate(userId: number): { allowed: boolean; reason?: string } {
+  const now = Date.now();
+  const lastRequest = userLastRequest.get(userId) || 0;
+  const timeSinceLastRequest = now - lastRequest;
+  
+  // Rate limit: 30 seconds between requests per user
+  if (timeSinceLastRequest < 30000) {
+    const waitTime = Math.ceil((30000 - timeSinceLastRequest) / 1000);
+    return { 
+      allowed: false, 
+      reason: `⏰ Подождите ${waitTime} секунд перед новым запросом` 
+    };
+  }
+
+  // Check if user has active generation
+  const userActiveGeneration = Array.from(activeGenerations.values())
+    .find(gen => gen.userId === userId);
+    
+  if (userActiveGeneration) {
+    return { 
+      allowed: false, 
+      reason: `🎨 У вас уже идет генерация изображения. Подождите её завершения.` 
+    };
+  }
+
+  return { allowed: true };
+}
+
+function addActiveGeneration(key: string, generation: ActiveGeneration): void {
+  activeGenerations.set(key, generation);
+  userLastRequest.set(generation.userId, generation.startTime);
+}
+
+function removeActiveGeneration(key: string): void {
+  activeGenerations.delete(key);
+}
+
+// Cleanup old generations (in case of crashes)
+setInterval(() => {
+  const now = Date.now();
+  const MAX_GENERATION_TIME = 5 * 60 * 1000; // 5 minutes
+  
+  for (const [key, generation] of activeGenerations.entries()) {
+    if (now - generation.startTime > MAX_GENERATION_TIME) {
+      console.log(`🧹 Cleaning up stale generation: ${key}`);
+      removeActiveGeneration(key);
+    }
+  }
+}, 60000); // Check every minute
+
 // Image caching system for lazy Firebase upload
 interface CachedImage {
   originalBuffer: Buffer;
@@ -342,10 +405,39 @@ bot.on("message:text", async (ctx) => {
 });
 
 async function generateAndReply(ctx: Context, userPrompt: string, replyToMessageId?: number) {
+  const userId = ctx.from?.id;
+  const chatId = ctx.chat?.id;
+  
+  if (!userId || !chatId) {
+    await ctx.reply("❌ Ошибка идентификации пользователя");
+    return;
+  }
+
+  // Check if user can generate
+  const generationCheck = canUserGenerate(userId);
+  if (!generationCheck.allowed) {
+    await ctx.reply(generationCheck.reason!, {
+      reply_to_message_id: replyToMessageId
+    });
+    return;
+  }
+
   // Send "generating" message
   const generatingMessage = await ctx.reply("🎨 Генерирую изображение Pepe...", {
     reply_to_message_id: replyToMessageId
   });
+
+  // Create generation key and add to active generations
+  const generationKey = `${userId}_${Date.now()}`;
+  const generation: ActiveGeneration = {
+    userId,
+    chatId,
+    prompt: userPrompt,
+    startTime: Date.now(),
+    generatingMessageId: generatingMessage.message_id
+  };
+  
+  addActiveGeneration(generationKey, generation);
   
   try {
     log(`Generating image for prompt: "${userPrompt}"`);
@@ -420,9 +512,15 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
     });
 
     log(`Successfully generated image and promo for: "${userPrompt}" (language: ${language}, mood: ${mood})`);
+    
+    // Remove from active generations
+    removeActiveGeneration(generationKey);
 
   } catch (error) {
     log(`Error generating content: ${error}`, "error");
+    
+    // Remove from active generations on error
+    removeActiveGeneration(generationKey);
     
     // Delete the "generating" message on error too
     if (ctx.chat) {
@@ -568,6 +666,35 @@ bot.command("leaderboard", async (ctx) => {
   message += "\n💡 Делитесь контентом, чтобы заработать больше очков!";
   
   await ctx.reply(message, { parse_mode: "Markdown" });
+});
+
+// Status command for monitoring (admin only)
+bot.command("status", async (ctx) => {
+  const userId = ctx.from?.id;
+  // Simple admin check - you can enhance this with proper admin list
+  const adminIds: number[] = []; // Add your admin user IDs here
+  
+  if (!userId || !adminIds.includes(userId)) {
+    await ctx.reply("❌ Команда доступна только администраторам");
+    return;
+  }
+
+  const activeCount = activeGenerations.size;
+  const now = Date.now();
+  
+  let statusMessage = `📊 **Статус бота:**\n\n`;
+  statusMessage += `🎨 Активных генераций: **${activeCount}**\n`;
+  statusMessage += `💾 Изображений в кэше: **${imageCache.size}**\n\n`;
+  
+  if (activeCount > 0) {
+    statusMessage += `**Активные генерации:**\n`;
+    for (const [key, gen] of activeGenerations.entries()) {
+      const duration = Math.round((now - gen.startTime) / 1000);
+      statusMessage += `• User ${gen.userId}: "${gen.prompt.slice(0, 30)}..." (${duration}s)\n`;
+    }
+  }
+  
+  await ctx.reply(statusMessage, { parse_mode: "Markdown" });
 });
 
 // Start the bot
