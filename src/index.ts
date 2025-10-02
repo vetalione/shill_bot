@@ -360,7 +360,7 @@ bot.on("callback_query:data", async (ctx) => {
       await ctx.reply(instructions, {
         parse_mode: "Markdown",
         reply_markup: new InlineKeyboard()
-          .text('🐦 Открыть Twitter', shareUrl)
+          .url('🐦 Открыть Twitter', shareUrl)
           .row()
           .text('✅ Подтвердить публикацию (+2 балла)', 'twitter_confirmed'),
         reply_to_message_id: ctx.callbackQuery.message?.message_id
