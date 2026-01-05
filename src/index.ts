@@ -258,7 +258,7 @@ function getLeaderboard(): Array<{name: string, points: number}> {
     .slice(0, 10);
 }
 
-async function createSharingButtons(promoText: string, cachedMessageId: string): Promise<InlineKeyboard> {
+async function createSharingButtons(promoText: string, cachedMessageId: string, userId?: number): Promise<InlineKeyboard> {
   // Store promo message for sharing
   promoMessages[cachedMessageId] = promoText;
   
@@ -306,6 +306,12 @@ async function createSharingButtons(promoText: string, cachedMessageId: string):
         const encodedText = encodeURIComponent(tweetWithCard);
         twitterUrl = `https://twitter.com/intent/tweet?text=${encodedText}`;
         
+        // Award 2 points for Twitter sharing (Twitter Card generation indicates intent to share)
+        if (userId) {
+          const newPoints = addPoints(userId.toString(), 2);
+          console.log(`🎯 User ${userId} earned 2 points for Twitter sharing (Twitter Card generated). Total: ${newPoints} points`);
+        }
+        
         console.log(`🃏 Twitter Card URL with real image: ${cardUrl}`);
         console.log(`📏 Total Twitter URL length: ${twitterUrl.length} characters`);
       } else {
@@ -329,11 +335,11 @@ async function createSharingButtons(promoText: string, cachedMessageId: string):
     twitterUrl = `https://twitter.com/intent/tweet?text=${encodeURIComponent(fallbackText)}`;
   }
   
-  // Use Switch Inline Query for Telegram sharing (will trigger lazy Firebase upload)
+  // Direct sharing buttons without intermediate steps
   return new InlineKeyboard()
-    .switchInline('🫂 Поделиться в Telegram (+1 бал)', `share:${cachedMessageId}`)
+    .switchInline('🫂 Поделиться в Telegram', `share:${cachedMessageId}`)
     .row()
-    .url('🐦 Поделиться в Twitter (+2 балла)', twitterUrl);
+    .url('🐦 Поделиться в Twitter', twitterUrl);
 }
 
 // Bot configuration
@@ -426,6 +432,7 @@ bot.command("start", async (ctx) => {
 🌟 **Дополнительные команды:**
 • /moods - список всех настроений  
 • /promo - получить промо-сообщение
+• /points - проверить свои баллы
 • /limit - проверить свои лимиты
 • /leaderboard - таблица лидеров
 
@@ -462,7 +469,7 @@ bot.command("promo", async (ctx) => {
     const promoMessageId = `promo${Date.now()}`;
     
     // Create sharing buttons for the promo message
-    const sharingButtons = await createSharingButtons(promo, promoMessageId);
+    const sharingButtons = await createSharingButtons(promo, promoMessageId, ctx.from?.id);
     
     await ctx.reply(promo, { 
       parse_mode: "Markdown",
@@ -474,9 +481,61 @@ bot.command("promo", async (ctx) => {
   }
 });
 
+// Points check command
+bot.command("points", async (ctx) => {
+  const userId = ctx.from?.id;
+  if (!userId) {
+    await ctx.reply("❌ Ошибка идентификации пользователя");
+    return;
+  }
+
+  const currentPoints = userPoints[userId.toString()] || 0;
+  const userName = ctx.from?.first_name || ctx.from?.username || "Unknown";
+  
+  let pointsMessage = `🎯 **Ваши баллы, ${userName}:**\n\n`;
+  pointsMessage += `💰 Текущий баланс: **${currentPoints}** баллов\n\n`;
+  
+  pointsMessage += `📈 **Как заработать больше:**\n`;
+  pointsMessage += `• 🫂 Telegram sharing: +1 балл\n`;
+  pointsMessage += `• 🐦 Twitter sharing: +2 балла\n\n`;
+  
+  pointsMessage += `🏆 Посмотрите таблицу лидеров: /leaderboard`;
+  
+  await ctx.reply(pointsMessage, { parse_mode: "Markdown" });
+});
+
+// Leaderboard command
+bot.command("leaderboard", async (ctx) => {
+  const leaderboard = getLeaderboard();
+  
+  if (leaderboard.length === 0) {
+    await ctx.reply("🏆 Таблица лидеров пуста! Начните делиться контентом, чтобы заработать очки!");
+    return;
+  }
+  
+  let message = "🏆 **Топ-10 лидеров по очкам:**\n\n";
+  
+  for (let i = 0; i < leaderboard.length; i++) {
+    const { name, points } = leaderboard[i];
+    const position = i + 1;
+    const medal = position === 1 ? "🥇" : position === 2 ? "🥈" : position === 3 ? "🥉" : "📍";
+    message += `${medal} ${position}. ${name}: **${points}** очков\n`;
+  }
+  
+  message += "\n💡 Делитесь контентом, чтобы заработать больше очков!";
+  
+  await ctx.reply(message, { parse_mode: "Markdown" });
+});
+
 // Main image generation handler
 bot.on("message:text", async (ctx) => {
   const prompt = ctx.message.text;
+  
+  // Skip if this is a command (let command handlers process it)
+  if (prompt.startsWith('/')) {
+    return;
+  }
+  
   const isGroup = isGroupChat(ctx);
   const isPrivate = isPrivateChat(ctx);
 
@@ -592,7 +651,7 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
     }
 
     // Create sharing buttons (Firebase upload will happen lazily)
-    const sharingButtons = promoMessage ? await createSharingButtons(promoMessage, messageId) : undefined;
+    const sharingButtons = promoMessage ? await createSharingButtons(promoMessage, messageId, userId) : undefined;
     
     // Delete the "generating" message
     if (ctx.chat) {
@@ -641,27 +700,28 @@ async function generateAndReply(ctx: Context, userPrompt: string, replyToMessage
 }
 
 // Handle callback queries (button clicks)
-bot.on("callback_query:data", async (ctx) => {
-  const data = ctx.callbackQuery.data;
-  const userId = ctx.from.id.toString();
-  const userName = ctx.from.first_name || ctx.from.username || "Unknown";
+// Handle chosen inline result (when user actually sends the shared content)
+bot.on("chosen_inline_result", async (ctx) => {
+  const resultId = ctx.chosenInlineResult.result_id;
+  const userId = ctx.from?.id;
   
-  // Legacy handler for old Twitter confirmation buttons (can be removed later)
-  if (data === "twitter_confirmed") {
-    await ctx.answerCallbackQuery({
-      text: "✅ Спасибо за использование бота!",
-      show_alert: false
-    });
+  if (userId && resultId.startsWith("share_")) {
+    // User actually sent the shared content, award additional bonus
+    const newPoints = addPoints(userId.toString(), 1);
+    const userName = ctx.from?.first_name || ctx.from?.username || "Unknown";
+    console.log(`🎯 ${userName} (${userId}) earned bonus 1 point for completing Telegram share. Total: ${newPoints} points`);
   }
 });
 
-// Handle inline queries (for sharing content)
+// Handle inline queries (for sharing content and generating new images)
 bot.on("inline_query", async (ctx) => {
-  const query = ctx.inlineQuery.query;
+  const query = ctx.inlineQuery.query.trim();
+  const userId = ctx.from?.id;
+  const userName = ctx.from?.first_name || ctx.from?.username || "Unknown";
   
-  console.log(`🔍 Inline query received: "${query}"`);
+  console.log(`🔍 Inline query received from ${userName} (${userId}): "${query}"`);
   
-  // Handle sharing queries
+  // Handle sharing queries (existing functionality)
   if (query.startsWith("share:")) {
     const messageId = query.split("share:")[1];
     const promoMessage = promoMessages[messageId];
@@ -688,6 +748,14 @@ bot.on("inline_query", async (ctx) => {
 
     // Try to get Firebase URL (lazy upload if needed)
     const firebaseImageUrl = await ensureFirebaseUpload(messageId);
+    
+    // Award 1 point for Telegram sharing (inline query indicates intent to share)
+    const userId = ctx.from?.id;
+    if (userId) {
+      const newPoints = addPoints(userId.toString(), 1);
+      const userName = ctx.from?.first_name || ctx.from?.username || "Unknown";
+      console.log(`🎯 ${userName} (${userId}) earned 1 point for Telegram sharing (inline query). Total: ${newPoints} points`);
+    }
     
     if (firebaseImageUrl) {
       // Return photo result with promo message
@@ -731,13 +799,180 @@ bot.on("inline_query", async (ctx) => {
     return;
   }
   
-  // Default inline query response
+  // Handle image generation queries (when user types prompt in inline)
+  if (query && query.length > 0) {
+    const userId = ctx.from?.id;
+    
+    if (!userId) {
+      await ctx.answerInlineQuery([
+        {
+          type: "article",
+          id: "error",
+          title: "❌ Ошибка",
+          description: "Не удалось идентифицировать пользователя",
+          input_message_content: {
+            message_text: "❌ Ошибка идентификации пользователя",
+          }
+        }
+      ]);
+      return;
+    }
+
+    // Check if user can generate (simplified for inline queries)
+    try {
+      const membershipCheck = await checkChannelMembership(ctx, userId);
+      if (!membershipCheck.allowed) {
+        console.log(`🔒 User ${userName} (${userId}) not subscribed for inline query`);
+        await ctx.answerInlineQuery([
+          {
+            type: "article",
+            id: "membership_required",
+            title: "🔒 Требуется подписка",
+            description: "Подпишитесь на @pepemp3 для использования бота",
+            input_message_content: {
+              message_text: membershipCheck.reason || "🔒 Требуется подписка на @pepemp3",
+            }
+          }
+        ]);
+        return;
+      }
+    } catch (error) {
+      console.log(`⚠️ Membership check failed for inline query, allowing anyway:`, error);
+      // For inline queries, if membership check fails, we'll allow it anyway
+    }
+
+    // Check daily limits (simplified for inline)
+    try {
+      const dailyCheck = checkDailyLimit(userId);
+      if (!dailyCheck.allowed) {
+        console.log(`📊 Daily limit exceeded for ${userName} (${userId})`);
+        await ctx.answerInlineQuery([
+          {
+            type: "article",
+            id: "limit_exceeded",
+            title: "📊 Лимит исчерпан",
+            description: "Дневной лимит генераций исчерпан",
+            input_message_content: {
+              message_text: dailyCheck.reason || "📊 Дневной лимит исчерпан",
+            }
+          }
+        ]);
+        return;
+      }
+    } catch (error) {
+      console.log(`⚠️ Daily limit check failed for inline query, allowing anyway:`, error);
+    }
+
+    try {
+      // Generate image for inline query
+      console.log(`🎨 Starting image generation for inline query from ${userName}: "${query}"`);
+      
+      const language: 'ru' | 'en' = /[а-яё]/i.test(query) ? 'ru' : 'en';
+      const userMood = extractMoodFromPrompt(query);
+      const mood = userMood || getRandomMood();
+      
+      console.log(`🎭 Selected mood: ${mood}, language: ${language}`);
+      
+      const pepePrompt = buildPepePrompt(query, mood);
+      console.log(`📝 Built prompt: ${pepePrompt.substring(0, 100)}...`);
+      
+      const imageResult = await generateGeminiImage({ prompt: pepePrompt });
+      
+      if (!imageResult) {
+        console.log(`❌ Gemini returned null for inline query`);
+        throw new Error("Failed to generate image");
+      }
+      
+      console.log(`✅ Image generated successfully, size: ${imageResult.length} bytes`);
+      
+      const imageBuffer = Buffer.from(imageResult);
+      
+      // Generate promo message
+      const promo = await generatePromoMessage(language);
+      
+      // Create unique message ID
+      const messageId = `inline${Date.now()}`;
+      
+      // Cache image and promo
+      try {
+        const compressedBuffer = await compressImageForTelegram(imageBuffer);
+        const filename = `pepe_${Date.now()}_${Math.random().toString(36).substr(2, 11)}.jpg`;
+        
+        imageCache.set(messageId, {
+          originalBuffer: imageBuffer,
+          compressedBuffer: compressedBuffer,
+          filename: filename
+        });
+        
+        promoMessages[messageId] = promo;
+        
+        console.log(`💾 Image cached for inline generation: ${messageId}`);
+      } catch (error) {
+        console.error(`❌ Image compression failed:`, error);
+      }
+      
+      // Upload to Firebase immediately for inline
+      console.log(`☁️ Uploading to Firebase for inline query...`);
+      const firebaseUrl = await ensureFirebaseUpload(messageId);
+      
+      if (firebaseUrl) {
+        console.log(`✅ Firebase upload successful: ${firebaseUrl}`);
+        
+        // Award points for inline generation
+        updateDailyGenerations(userId);
+        const newPoints = addPoints(userId.toString(), 1);
+        console.log(`🎯 User ${userName} (${userId}) earned 1 point for inline generation. Total: ${newPoints} points`);
+        
+        // Create sharing buttons
+        const sharingButtons = await createSharingButtons(promo, messageId, userId);
+        
+        await ctx.answerInlineQuery([
+          {
+            type: "photo",
+            id: `generated_${messageId}`,
+            photo_url: firebaseUrl,
+            thumbnail_url: firebaseUrl,
+            title: `🎨 Pepe: ${query}`,
+            description: `AI-генерированный Pepe с настроением: ${mood}`,
+            caption: promo,
+            parse_mode: "Markdown",
+            reply_markup: sharingButtons
+          }
+        ], {
+          cache_time: 1,
+          is_personal: true
+        });
+        
+        console.log(`✅ Inline image generation complete for: "${query}"`);
+        return;
+      } else {
+        console.log(`❌ Firebase upload failed for inline query`);
+      }
+    } catch (error) {
+      console.error(`❌ Inline generation failed for ${userName} (${userId}):`, error);
+      
+      await ctx.answerInlineQuery([
+        {
+          type: "article",
+          id: "generation_error",
+          title: "❌ Ошибка генерации",
+          description: "Не удалось сгенерировать изображение",
+          input_message_content: {
+            message_text: "❌ Ошибка при генерации изображения. Попробуйте позже.",
+          }
+        }
+      ]);
+      return;
+    }
+  }
+  
+  // Default inline query response (when query is empty)
   await ctx.answerInlineQuery([
     {
       type: "article",
       id: "default",
       title: "🤖 ShillBot - AI Pepe Generator",
-      description: "Отправьте запрос боту для генерации AI изображений Pepe",
+      description: "Введите описание для генерации AI изображения Pepe",
       input_message_content: {
         message_text: "🐸 **ShillBot** - генератор AI изображений Pepe\n\n🎨 Напишите боту что должен делать Pepe!\n\n💬 [Telegram](https://t.me/pepemp3) • 🐦 [X/Twitter](https://x.com/pepegotavoice)",
         parse_mode: "Markdown"
@@ -747,28 +982,6 @@ bot.on("inline_query", async (ctx) => {
 });
 
 // Leaderboard command
-bot.command("leaderboard", async (ctx) => {
-  const leaderboard = getLeaderboard();
-  
-  if (leaderboard.length === 0) {
-    await ctx.reply("🏆 Таблица лидеров пуста! Начните делиться контентом, чтобы заработать очки!");
-    return;
-  }
-  
-  let message = "🏆 **Топ-10 лидеров по очкам:**\n\n";
-  
-  for (let i = 0; i < leaderboard.length; i++) {
-    const { name, points } = leaderboard[i];
-    const position = i + 1;
-    const medal = position === 1 ? "🥇" : position === 2 ? "🥈" : position === 3 ? "🥉" : "📍";
-    message += `${medal} ${position}. ${name}: **${points}** очков\n`;
-  }
-  
-  message += "\n💡 Делитесь контентом, чтобы заработать больше очков!";
-  
-  await ctx.reply(message, { parse_mode: "Markdown" });
-});
-
 // Status command for monitoring (admin only)
 bot.command("status", async (ctx) => {
   const userId = ctx.from?.id;
@@ -830,4 +1043,16 @@ bot.command("limit", async (ctx) => {
 
 // Start the bot
 log("ShillBot is running...");
+// Set bot commands for better UX
+await bot.api.setMyCommands([
+  { command: "start", description: "🚀 Начать работу с ботом" },
+  { command: "help", description: "❓ Показать помощь" },
+  { command: "points", description: "🎯 Проверить баллы" },
+  { command: "leaderboard", description: "🏆 Таблица лидеров" },
+  { command: "status", description: "📊 Статус бота (только для админов)" },
+  { command: "limit", description: "📈 Проверить дневной лимит" }
+]);
+
+console.log("✅ Bot commands set successfully");
+
 bot.start();
