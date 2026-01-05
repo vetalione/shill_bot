@@ -538,14 +538,30 @@ bot.on("message:text", async (ctx) => {
   
   const isGroup = isGroupChat(ctx);
   const isPrivate = isPrivateChat(ctx);
+  
+  // Get bot username (fallback to hardcoded if not available)
+  const botUsername = ctx.me?.username || bot.botInfo?.username || "vibeshill_bot";
+
+  // Log group messages for debugging
+  if (isGroup) {
+    console.log(`📨 Group message received: "${prompt.substring(0, 50)}..." from ${ctx.from?.first_name}`);
+    console.log(`🤖 Bot username: @${botUsername}`);
+  }
 
   // Skip if it's a group and bot is not mentioned
-  if (isGroup && !extractBotMention(prompt, bot.botInfo.username)) {
-    return;
+  if (isGroup) {
+    const mentionedPrompt = extractBotMention(prompt, botUsername);
+    if (!mentionedPrompt) {
+      // Also check if message starts with @username
+      if (!prompt.toLowerCase().includes(`@${botUsername.toLowerCase()}`)) {
+        return;
+      }
+    }
+    console.log(`✅ Bot mentioned in group! Processing...`);
   }
 
   // Extract clean prompt (remove bot mention if present)
-  const cleanPrompt = extractBotMention(prompt, bot.botInfo.username) || prompt;
+  const cleanPrompt = extractBotMention(prompt, botUsername) || prompt.replace(new RegExp(`@${botUsername}\\s*`, 'gi'), '').trim();
   
   // Validate prompt
   const validation = validatePrompt(cleanPrompt);
