@@ -1,4 +1,4 @@
-# Railway deployment config
+# Railway deployment config - v2
 FROM node:18-alpine
 
 WORKDIR /app
@@ -6,7 +6,7 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install all dependencies
+# Install all dependencies (including dev deps for tsx)
 RUN npm ci
 
 # Copy source code
