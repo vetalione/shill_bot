@@ -17,6 +17,27 @@ interface ActiveGeneration {
 const activeGenerations = new Map<string, ActiveGeneration>();
 const userLastRequest = new Map<number, number>(); // userId -> timestamp
 
+// Cache for inline query prompts (to bypass callback_data 64 byte limit)
+interface InlinePromptCache {
+  prompt: string;
+  userId: number;
+  userName: string;
+  timestamp: number;
+}
+const inlinePromptCache = new Map<string, InlinePromptCache>();
+
+// Cleanup old inline prompt cache entries (older than 1 hour)
+setInterval(() => {
+  const now = Date.now();
+  const MAX_CACHE_AGE = 60 * 60 * 1000; // 1 hour
+  
+  for (const [key, entry] of inlinePromptCache.entries()) {
+    if (now - entry.timestamp > MAX_CACHE_AGE) {
+      inlinePromptCache.delete(key);
+    }
+  }
+}, 5 * 60 * 1000); // Check every 5 minutes
+
 // Rate limiting and concurrent generation control
 async function canUserGenerate(ctx: Context, userId: number): Promise<{ allowed: boolean; reason?: string; remaining?: number }> {
   const now = Date.now();
@@ -816,6 +837,7 @@ bot.on("inline_query", async (ctx) => {
   }
   
   // Handle image generation queries (when user types prompt in inline)
+  // Instead of generating immediately (which times out), show a button to trigger generation
   if (query && query.length > 0) {
     const userId = ctx.from?.id;
     
@@ -834,152 +856,47 @@ bot.on("inline_query", async (ctx) => {
       return;
     }
 
-    // Check if user can generate (simplified for inline queries)
-    try {
-      const membershipCheck = await checkChannelMembership(ctx, userId);
-      if (!membershipCheck.allowed) {
-        console.log(`🔒 User ${userName} (${userId}) not subscribed for inline query`);
-        await ctx.answerInlineQuery([
-          {
-            type: "article",
-            id: "membership_required",
-            title: "🔒 Требуется подписка",
-            description: "Подпишитесь на @pepemp3 для использования бота",
-            input_message_content: {
-              message_text: membershipCheck.reason || "🔒 Требуется подписка на @pepemp3",
-            }
-          }
-        ]);
-        return;
-      }
-    } catch (error) {
-      console.log(`⚠️ Membership check failed for inline query, allowing anyway:`, error);
-      // For inline queries, if membership check fails, we'll allow it anyway
-    }
-
-    // Check daily limits (simplified for inline)
-    try {
-      const dailyCheck = checkDailyLimit(userId);
-      if (!dailyCheck.allowed) {
-        console.log(`📊 Daily limit exceeded for ${userName} (${userId})`);
-        await ctx.answerInlineQuery([
-          {
-            type: "article",
-            id: "limit_exceeded",
-            title: "📊 Лимит исчерпан",
-            description: "Дневной лимит генераций исчерпан",
-            input_message_content: {
-              message_text: dailyCheck.reason || "📊 Дневной лимит исчерпан",
-            }
-          }
-        ]);
-        return;
-      }
-    } catch (error) {
-      console.log(`⚠️ Daily limit check failed for inline query, allowing anyway:`, error);
-    }
-
-    try {
-      // Generate image for inline query
-      console.log(`🎨 Starting image generation for inline query from ${userName}: "${query}"`);
-      
-      const language: 'ru' | 'en' = /[а-яё]/i.test(query) ? 'ru' : 'en';
-      const userMood = extractMoodFromPrompt(query);
-      const mood = userMood || getRandomMood();
-      
-      console.log(`🎭 Selected mood: ${mood}, language: ${language}`);
-      
-      const pepePrompt = buildPepePrompt(query, mood);
-      console.log(`📝 Built prompt: ${pepePrompt.substring(0, 100)}...`);
-      
-      const imageResult = await generateGeminiImage({ prompt: pepePrompt });
-      
-      if (!imageResult) {
-        console.log(`❌ Gemini returned null for inline query`);
-        throw new Error("Failed to generate image");
-      }
-      
-      console.log(`✅ Image generated successfully, size: ${imageResult.length} bytes`);
-      
-      const imageBuffer = Buffer.from(imageResult);
-      
-      // Generate promo message
-      const promo = await generatePromoMessage(language);
-      
-      // Create unique message ID
-      const messageId = `inline${Date.now()}`;
-      
-      // Cache image and promo
-      try {
-        const compressedBuffer = await compressImageForTelegram(imageBuffer);
-        const filename = `pepe_${Date.now()}_${Math.random().toString(36).substr(2, 11)}.jpg`;
-        
-        imageCache.set(messageId, {
-          originalBuffer: imageBuffer,
-          compressedBuffer: compressedBuffer,
-          filename: filename
-        });
-        
-        promoMessages[messageId] = promo;
-        
-        console.log(`💾 Image cached for inline generation: ${messageId}`);
-      } catch (error) {
-        console.error(`❌ Image compression failed:`, error);
-      }
-      
-      // Upload to Firebase immediately for inline
-      console.log(`☁️ Uploading to Firebase for inline query...`);
-      const firebaseUrl = await ensureFirebaseUpload(messageId);
-      
-      if (firebaseUrl) {
-        console.log(`✅ Firebase upload successful: ${firebaseUrl}`);
-        
-        // Award points for inline generation
-        updateDailyGenerations(userId);
-        const newPoints = addPoints(userId.toString(), 1);
-        console.log(`🎯 User ${userName} (${userId}) earned 1 point for inline generation. Total: ${newPoints} points`);
-        
-        // Create sharing buttons
-        const sharingButtons = await createSharingButtons(promo, messageId, userId);
-        
-        await ctx.answerInlineQuery([
-          {
-            type: "photo",
-            id: `generated_${messageId}`,
-            photo_url: firebaseUrl,
-            thumbnail_url: firebaseUrl,
-            title: `🎨 Pepe: ${query}`,
-            description: `AI-генерированный Pepe с настроением: ${mood}`,
-            caption: promo,
-            parse_mode: "Markdown",
-            reply_markup: sharingButtons
-          }
-        ], {
-          cache_time: 1,
-          is_personal: true
-        });
-        
-        console.log(`✅ Inline image generation complete for: "${query}"`);
-        return;
-      } else {
-        console.log(`❌ Firebase upload failed for inline query`);
-      }
-    } catch (error) {
-      console.error(`❌ Inline generation failed for ${userName} (${userId}):`, error);
-      
-      await ctx.answerInlineQuery([
-        {
-          type: "article",
-          id: "generation_error",
-          title: "❌ Ошибка генерации",
-          description: "Не удалось сгенерировать изображение",
-          input_message_content: {
-            message_text: "❌ Ошибка при генерации изображения. Попробуйте позже.",
-          }
+    // Generate unique cache key for this prompt
+    const cacheKey = `inl_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+    
+    // Cache the prompt for later retrieval
+    inlinePromptCache.set(cacheKey, {
+      prompt: query,
+      userId: userId,
+      userName: userName,
+      timestamp: Date.now()
+    });
+    
+    console.log(`💾 Cached inline prompt: ${cacheKey} -> "${query}"`);
+    
+    // Determine language and mood for display
+    const language: 'ru' | 'en' = /[а-яё]/i.test(query) ? 'ru' : 'en';
+    const displayMood = extractMoodFromPrompt(query) || (language === 'ru' ? 'случайное' : 'random');
+    
+    // Return article with generate button
+    await ctx.answerInlineQuery([
+      {
+        type: "article",
+        id: `gen_${cacheKey}`,
+        title: `🎨 Сгенерировать: ${query.substring(0, 40)}${query.length > 40 ? '...' : ''}`,
+        description: `Нажмите чтобы создать AI Pepe • Настроение: ${displayMood}`,
+        input_message_content: {
+          message_text: `🎨 **Запрос на генерацию Pepe**\n\n📝 Промпт: _${query}_\n\n👇 Нажмите кнопку чтобы сгенерировать изображение`,
+          parse_mode: "Markdown"
+        },
+        reply_markup: {
+          inline_keyboard: [[
+            { text: "🚀 Сгенерировать Pepe!", callback_data: `igen:${cacheKey}` }
+          ]]
         }
-      ]);
-      return;
-    }
+      }
+    ], {
+      cache_time: 1,
+      is_personal: true
+    });
+    
+    console.log(`✅ Inline query answered with generate button for: "${query}"`);
+    return;
   }
   
   // Default inline query response (when query is empty)
@@ -995,6 +912,163 @@ bot.on("inline_query", async (ctx) => {
       }
     }
   ]);
+});
+
+// Handle inline generation button callback
+bot.on("callback_query:data", async (ctx) => {
+  const data = ctx.callbackQuery.data;
+  
+  // Handle inline generation button (igen:cacheKey)
+  if (data.startsWith("igen:")) {
+    const cacheKey = data.replace("igen:", "");
+    const cachedPrompt = inlinePromptCache.get(cacheKey);
+    
+    console.log(`🔘 Generate button clicked: ${cacheKey}`);
+    
+    if (!cachedPrompt) {
+      await ctx.answerCallbackQuery({
+        text: "❌ Запрос устарел. Попробуйте снова.",
+        show_alert: true
+      });
+      return;
+    }
+    
+    const userId = ctx.from?.id;
+    const userName = ctx.from?.first_name || ctx.from?.username || "Unknown";
+    
+    if (!userId) {
+      await ctx.answerCallbackQuery({
+        text: "❌ Ошибка идентификации",
+        show_alert: true
+      });
+      return;
+    }
+    
+    // Check membership
+    try {
+      const membershipCheck = await checkChannelMembership(ctx, userId);
+      if (!membershipCheck.allowed) {
+        await ctx.answerCallbackQuery({
+          text: "🔒 Подпишитесь на @pepemp3 для использования бота",
+          show_alert: true
+        });
+        return;
+      }
+    } catch (error) {
+      console.log(`⚠️ Membership check failed, allowing anyway:`, error);
+    }
+    
+    // Check daily limits
+    try {
+      const dailyCheck = checkDailyLimit(userId);
+      if (!dailyCheck.allowed) {
+        await ctx.answerCallbackQuery({
+          text: dailyCheck.reason || "📊 Дневной лимит исчерпан",
+          show_alert: true
+        });
+        return;
+      }
+    } catch (error) {
+      console.log(`⚠️ Daily limit check failed, allowing anyway:`, error);
+    }
+    
+    // Answer callback immediately to prevent timeout
+    await ctx.answerCallbackQuery({
+      text: "🎨 Генерирую изображение..."
+    });
+    
+    // Update message to show generating status
+    try {
+      await ctx.editMessageText(
+        `🎨 **Генерация Pepe...**\n\n📝 Промпт: _${cachedPrompt.prompt}_\n\n⏳ Пожалуйста, подождите...`,
+        { parse_mode: "Markdown" }
+      );
+    } catch (error) {
+      console.log(`⚠️ Could not edit message:`, error);
+    }
+    
+    try {
+      console.log(`🎨 Starting inline generation for ${userName}: "${cachedPrompt.prompt}"`);
+      
+      const language: 'ru' | 'en' = /[а-яё]/i.test(cachedPrompt.prompt) ? 'ru' : 'en';
+      const userMood = extractMoodFromPrompt(cachedPrompt.prompt);
+      const mood = userMood || getRandomMood();
+      
+      const pepePrompt = buildPepePrompt(cachedPrompt.prompt, mood);
+      const imageResult = await generateGeminiImage({ prompt: pepePrompt });
+      
+      if (!imageResult) {
+        throw new Error("Failed to generate image");
+      }
+      
+      console.log(`✅ Image generated, size: ${imageResult.length} bytes`);
+      
+      const imageBuffer = Buffer.from(imageResult);
+      
+      // Generate promo message
+      const promo = await generatePromoMessage(language);
+      
+      // Create unique message ID
+      const messageId = `inlbtn${Date.now()}`;
+      
+      // Cache image and promo
+      const compressedBuffer = await compressImageForTelegram(imageBuffer);
+      const filename = `pepe_${Date.now()}_${Math.random().toString(36).substr(2, 11)}.jpg`;
+      
+      imageCache.set(messageId, {
+        originalBuffer: imageBuffer,
+        compressedBuffer: compressedBuffer,
+        filename: filename
+      });
+      
+      promoMessages[messageId] = promo;
+      
+      // Award points
+      updateDailyGenerations(userId);
+      const newPoints = addPoints(userId.toString(), 1);
+      console.log(`🎯 User ${userName} earned 1 point. Total: ${newPoints} points`);
+      
+      // Create sharing buttons
+      const sharingButtons = await createSharingButtons(promo, messageId, userId);
+      
+      // Delete the "generating" message
+      try {
+        await ctx.deleteMessage();
+      } catch (error) {
+        console.log(`⚠️ Could not delete message:`, error);
+      }
+      
+      // Send the generated image
+      const chatId = ctx.chat?.id || ctx.from.id;
+      await ctx.api.sendPhoto(chatId, new InputFile(compressedBuffer, filename), {
+        caption: promo,
+        parse_mode: "Markdown",
+        reply_markup: sharingButtons
+      });
+      
+      console.log(`✅ Inline button generation complete for: "${cachedPrompt.prompt}"`);
+      
+      // Cleanup cache
+      inlinePromptCache.delete(cacheKey);
+      
+    } catch (error) {
+      console.error(`❌ Inline button generation failed:`, error);
+      
+      try {
+        await ctx.editMessageText(
+          `❌ **Ошибка генерации**\n\n📝 Промпт: _${cachedPrompt.prompt}_\n\nПопробуйте снова позже.`,
+          { parse_mode: "Markdown" }
+        );
+      } catch (e) {
+        console.log(`⚠️ Could not edit error message:`, e);
+      }
+    }
+    
+    return;
+  }
+  
+  // Handle other callback queries (existing functionality)
+  await ctx.answerCallbackQuery();
 });
 
 // Leaderboard command
