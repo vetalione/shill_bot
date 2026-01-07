@@ -563,37 +563,58 @@ bot.on("message:text", async (ctx) => {
   // Get bot username (fallback to hardcoded if not available)
   const botUsername = ctx.me?.username || bot.botInfo?.username || "vibeshill_bot";
 
-  // Log group messages for debugging
-  if (isGroup) {
-    console.log(`📨 Group message received: "${prompt.substring(0, 50)}..." from ${ctx.from?.first_name}`);
-    console.log(`🤖 Bot username: @${botUsername}`);
-  }
-
-  // Skip if it's a group and bot is not mentioned
+  // For group chats - only respond when bot is mentioned
   if (isGroup) {
     const mentionedPrompt = extractBotMention(prompt, botUsername);
-    if (!mentionedPrompt) {
-      // Also check if message starts with @username
-      if (!prompt.toLowerCase().includes(`@${botUsername.toLowerCase()}`)) {
-        return;
-      }
+    const hasMention = prompt.toLowerCase().includes(`@${botUsername.toLowerCase()}`);
+    
+    if (!mentionedPrompt && !hasMention) {
+      // Bot not mentioned, ignore
+      return;
     }
-    console.log(`✅ Bot mentioned in group! Processing...`);
-  }
-
-  // Extract clean prompt (remove bot mention if present)
-  const cleanPrompt = extractBotMention(prompt, botUsername) || prompt.replace(new RegExp(`@${botUsername}\\s*`, 'gi'), '').trim();
-  
-  // Validate prompt
-  const validation = validatePrompt(cleanPrompt);
-  if (!validation.isValid) {
-    await ctx.reply(`❌ ${validation.error}`, {
-      reply_to_message_id: ctx.message.message_id
-    });
+    
+    // Extract clean prompt (remove bot mention)
+    const cleanPrompt = mentionedPrompt || prompt.replace(new RegExp(`@${botUsername}\\s*`, 'gi'), '').trim();
+    
+    if (!cleanPrompt || cleanPrompt.length === 0) {
+      await ctx.reply("🐸 Привет! Напиши что должен делать Pepe после моего @username\n\nПример: `@vibeshill_bot танцует на луне`", {
+        parse_mode: "Markdown",
+        reply_to_message_id: ctx.message.message_id
+      });
+      return;
+    }
+    
+    console.log(`📨 Group mention from ${ctx.from?.first_name}: "${cleanPrompt}"`);
+    
+    // Validate prompt
+    const validation = validatePrompt(cleanPrompt);
+    if (!validation.isValid) {
+      await ctx.reply(`❌ ${validation.error}`, {
+        reply_to_message_id: ctx.message.message_id
+      });
+      return;
+    }
+    
+    // Generate and reply in group
+    await generateAndReply(ctx, cleanPrompt, ctx.message.message_id);
     return;
   }
 
-  await generateAndReply(ctx, cleanPrompt, ctx.message.message_id);
+  // For private chats - respond to any message
+  if (isPrivate) {
+    const cleanPrompt = prompt.replace(new RegExp(`@${botUsername}\\s*`, 'gi'), '').trim();
+    
+    // Validate prompt
+    const validation = validatePrompt(cleanPrompt);
+    if (!validation.isValid) {
+      await ctx.reply(`❌ ${validation.error}`, {
+        reply_to_message_id: ctx.message.message_id
+      });
+      return;
+    }
+
+    await generateAndReply(ctx, cleanPrompt, ctx.message.message_id);
+  }
 });
 
 async function generateAndReply(ctx: Context, userPrompt: string, replyToMessageId?: number) {
